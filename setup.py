@@ -6,7 +6,7 @@ with open('requirements.txt') as fp:
 setup(name='togepi',
       version="1.0",
       description='toeplitz-based generative pretraining',
-      author='Tushaar Gangavarapu',
+      author='Tushaar Gangavarapu, Lucas Molter',
       packages=find_packages(),
       python_requires=">=3.7",
       install_requires=requirements,

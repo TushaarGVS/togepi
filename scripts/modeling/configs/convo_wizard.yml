@@ -1,0 +1,63 @@
+general:
+  device: 'auto'
+
+transformer:
+  id: 'togepi'
+  args:
+    embedding_dim: 300
+    hidden_dim: 512
+    max_relative_position: null
+    use_sinusoidal_init: True
+    positional_network_type: 'ffnn'
+    output_dim: 2
+    classifier_head_type: 'rnn'
+    num_heads: 6
+    num_encoder_layers: 4
+    max_length: 2048
+    pad_token_position: 0
+    pad_tok_type: 0
+    num_token_types: 2
+    attention_dropout: 0.05
+    dropout: 0.1
+
+optimizer:
+  id: 'noam'
+  adam:
+    args:
+      lr: 2.0e-3
+      betas: [ 0.9, 0.999 ]
+      eps: 1.0e-9
+  args:
+    num_warmup_steps: 4000
+
+trainer:
+  id: 'togepi_trainer'
+  args:
+    generator:
+      is_labeled_data: False
+      labels_ignore_idx: 0
+      use_class_weights: False
+      gradient_clip_value: 0.75
+      num_workers: 4
+      use_mixed_precision: True
+    discriminator:
+      is_labeled_data: True
+      labels_ignore_idx: -100
+      use_class_weights: False
+      gradient_clip_value: 0.75
+      num_workers: 4
+      use_mixed_precision: True
+
+train_and_eval:
+  args:
+    batch_size: 3
+    num_steps_per_epoch: 100000
+    num_epochs: 20
+    checkpoint_every: 1
+
+generate:
+  args:
+    max_new_tokens: 100
+    temperature: 1.0
+    num_samples: 10
+    top_k: 50
