@@ -1,4 +1,3 @@
 #!/bin/sh
-conda create --name togepi
-conda activate togepi
-pip install -r requirements.txt
+#SBATCH -N 1
+python3 installation.py
