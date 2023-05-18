@@ -8,12 +8,13 @@ tqdm~=4.65.0
 scikit-learn~=1.2.2
 wandb~=0.14.2
 tokenizers==0.13.3
-transformers==4.28.1
+transformers
 PyYAML~=6.0
 rich==13.3.4
 jsonlines~=3.1.0
 datasets==2.11.0
 torchinfo~=1.7.2
-git+https://github.com/huggingface/transformers.git
 huggingface-hub
+tensorflow
 nltk
+git+https://github.com/huggingface/transformers.git
