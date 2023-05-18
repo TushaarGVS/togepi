@@ -12,7 +12,7 @@ transformers
 PyYAML~=6.0
 rich==13.3.4
 jsonlines~=3.1.0
-datasets==2.11.0
+datasets
 torchinfo~=1.7.2
 huggingface-hub
 tensorflow
