@@ -344,9 +344,9 @@ class SpeedTestConfig:
 
 def main():
 	#nub_heads = [2,8,16,64]
-	nub_heads = [2,4,8,16]
-	test_max_position_embeddings = np.array([64,128,256,512])
-	test_embedding_dim = np.array([64,128,256,512])
+	nub_heads = [8]
+	test_max_position_embeddings = np.array([512])
+	test_embedding_dim = np.array([512])
 	n_col = test_max_position_embeddings.shape[0]
 	n_row = test_embedding_dim.shape[0]
 	nb_episodes = 7
@@ -394,39 +394,41 @@ def main():
 					togepi_result[k,j] += end - start
 				togepi_result[k,j] = togepi_result[k,j]/nb_episodes
 
-		file_name = "Z_Results_Heads_"+str(nub_heads[i])+"_mha"+".txt"
-		f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/"+file_name,'wb')
-		#f = open(file_name,'wb')
-		tmp = np.concatenate((np.zeros((1,mha_results.shape[1])),mha_results))
-		tmp = np.concatenate((np.zeros((1,tmp.shape[0])),tmp.T))
-		tmp = tmp.T
-		tmp[0,1:]=test_max_position_embeddings
-		tmp[1:,0]=test_embedding_dim
-		for line in np.matrix(tmp):
-			np.savetxt(f,line,fmt='%.2f')
-		f.close()
-		file_name = "Z_Results_Heads_"+str(nub_heads[i])+"_togepi"+".txt"
-		f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/"+file_name,'wb')
-		#f = open(file_name,'wb')
-		tmp = np.concatenate((np.zeros((1,togepi_result.shape[1])),togepi_result))
-		tmp = np.concatenate((np.zeros((1,tmp.shape[0])),tmp.T))
-		tmp = tmp.T
-		tmp[0,1:]=test_max_position_embeddings
-		tmp[1:,0]=test_embedding_dim
-		for line in np.matrix(tmp):
-			np.savetxt(f,line,fmt='%.2f')
-		f.close()
-	file_name = "Z_col_idx_test_max_position_embeddings.txt"
-	f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/"+file_name,'wb')
-	#f = open(file_name,'wb')
-	np.savetxt(f, test_max_position_embeddings, fmt='%.2f')
-	f.close()
+		#file_name = "Z_Results_Heads_"+str(nub_heads[i])+"_mha"+".txt"
+		#f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/"+file_name,'wb')
+		#tmp = np.concatenate((np.zeros((1,mha_results.shape[1])),mha_results))
+		#tmp = np.concatenate((np.zeros((1,tmp.shape[0])),tmp.T))
+		#tmp = tmp.T
+		#tmp[0,1:]=test_max_position_embeddings
+		#tmp[1:,0]=test_embedding_dim
+		#for line in np.matrix(tmp):
+		#	np.savetxt(f,line,fmt='%.2f')
+		#f.close()
+		#file_name = "Z_Results_Heads_"+str(nub_heads[i])+"_togepi"+".txt"
+		#f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/"+file_name,'wb')
+		#tmp = np.concatenate((np.zeros((1,togepi_result.shape[1])),togepi_result))
+		#tmp = np.concatenate((np.zeros((1,tmp.shape[0])),tmp.T))
+		#tmp = tmp.T
+		#tmp[0,1:]=test_max_position_embeddings
+		#tmp[1:,0]=test_embedding_dim
+		#for line in np.matrix(tmp):
+		#	np.savetxt(f,line,fmt='%.2f')
+		#f.close()
+	#file_name = "Z_col_idx_test_max_position_embeddings.txt"
+	#f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/"+file_name,'wb')
+	#np.savetxt(f, test_max_position_embeddings, fmt='%.2f')
+	#f.close()
 
-	file_name = "Z_col_idx_test_embedding_dim.txt"
-	f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/"+file_name,'wb')
-	#f = open(file_name,'wb')
-	np.savetxt(f, test_embedding_dim, fmt='%.2f')
-	f.close()
+	#file_name = "Z_col_idx_test_embedding_dim.txt"
+	#f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/"+file_name,'wb')
+        f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/testTushaar_mha.txt",'wb')
+        np.savetxt(f, mha_results, fmt='%.2f')
+        f.close()
+        f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/testTushaar_togepi.txt",'wb')
+        np.savetxt(f, togepi_result, fmt='%.2f')
+        f.close()
+	#np.savetxt(f, test_embedding_dim, fmt='%.2f')
+	#f.close()
 
 
 if __name__ == "__main__":
