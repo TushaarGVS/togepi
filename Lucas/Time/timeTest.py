@@ -337,7 +337,7 @@ class SpeedTestConfig:
 		self.attn_dropout_proba = 0.1
 
 		# training
-		self.batch_size = 64
+		self.batch_size = 4
 	
 #test_speed_config = SpeedTestConfig()
 #test_speed_config.vocab_size
@@ -345,8 +345,8 @@ class SpeedTestConfig:
 def main():
 	nub_heads = [2,8,16,64]
 	#nub_heads = [2,4,8,16]
-	test_max_position_embeddings = np.array([64,128,256,512,1024,2048,4096])
-	test_embedding_dim = np.array([64,128,256,512,1024,2048,4096])
+	test_max_position_embeddings = np.array([64,128,256,512,1024,2048])
+	test_embedding_dim = np.array([64,128,256,512,1024,2048])
 	n_col = test_max_position_embeddings.shape[0]
 	n_row = test_embedding_dim.shape[0]
 	nb_episodes = 7
