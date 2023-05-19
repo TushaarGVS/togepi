@@ -399,7 +399,7 @@ def main():
 		tmp = np.concatenate((np.zeros((1,mha_results.shape[1])),mha_results))
 		tmp = np.concatenate((np.zeros((1,tmp.shape[0])),tmp.T))
 		tmp = tmp.T
-	    tmp[0,1:]=test_max_position_embeddings
+		tmp[0,1:]=test_max_position_embeddings
 		tmp[1:,0]=test_embedding_dim
 		for line in np.matrix(tmp):
 			np.savetxt(f,line,fmt='%.2f')
@@ -411,7 +411,7 @@ def main():
 		tmp = tmp.T
 		tmp[0,1:]=test_max_position_embeddings
 		tmp[1:,0]=test_embedding_dim
-	    for line in np.matrix(tmp):
+		for line in np.matrix(tmp):
 			np.savetxt(f,line,fmt='%.2f')
 		f.close()
 	file_name = "Z_col_idx_test_max_position_embeddings.txt"
