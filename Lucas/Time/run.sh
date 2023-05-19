@@ -1,4 +1,4 @@
 #!/bin/sh
-#SBATCH -N 1
-#SBATCH --mem=8000
+#SBATCH -N 2
+#SBATCH --mem=16000
 python3 timeTest.py
