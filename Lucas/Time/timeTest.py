@@ -337,7 +337,7 @@ class SpeedTestConfig:
 		self.attn_dropout_proba = 0.1
 
 		# training
-		self.batch_size = 64
+		self.batch_size = 4
 	
 #test_speed_config = SpeedTestConfig()
 #test_speed_config.vocab_size
