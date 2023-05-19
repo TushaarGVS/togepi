@@ -343,7 +343,7 @@ class SpeedTestConfig:
 #test_speed_config.vocab_size
 
 def main():
-	nub_heads = [2,8,16,64]
+	nub_heads = [16,64]
 	#nub_heads = [8]
 	test_max_position_embeddings = np.array([64,128,256,512,1024])
 	test_embedding_dim = np.array([64,128,256,512,1024,2048])
