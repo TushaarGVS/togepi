@@ -421,12 +421,12 @@ def main():
 
 	#file_name = "Z_col_idx_test_embedding_dim.txt"
 	#f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/"+file_name,'wb')
-        f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/testTushaar_mha.txt",'wb')
-        np.savetxt(f, mha_results, fmt='%.2f')
-        f.close()
-        f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/testTushaar_togepi.txt",'wb')
-        np.savetxt(f, togepi_result, fmt='%.2f')
-        f.close()
+		f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/testTushaar_mha.txt",'wb')
+		np.savetxt(f, mha_results, fmt='%.2f')
+		f.close()
+		f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/testTushaar_togepi.txt",'wb')
+		np.savetxt(f, togepi_result, fmt='%.2f')
+		f.close()
 	#np.savetxt(f, test_embedding_dim, fmt='%.2f')
 	#f.close()
 
