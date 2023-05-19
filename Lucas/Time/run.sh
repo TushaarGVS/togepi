@@ -1,5 +1,4 @@
 #!/bin/sh
 #SBATCH -N 1
-#SBATCH --mem=16000
-pip3 install torchinfo
+#SBATCH --mem=8000
 python3 timeTest.py
