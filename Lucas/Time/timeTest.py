@@ -381,12 +381,12 @@ def main():
 		file_name = "Results_Heads_"+str(nub_heads[i])+"_mha"+".txt"
 		f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/"+file_name,'wb')
 	    for line in np.matrix(mha_results):
-	        np.savetxt(f, line, fmt='%.2f')
+	    	np.savetxt(f, line, fmt='%.2f')
 	    f.close()
 	    file_name = "Results_Heads_"+str(nub_heads[i])+"_togepi"+".txt"
 	    f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/"+file_name,'wb')
 	    for line in np.matrix(togepi_result):
-	        np.savetxt(f, line, fmt='%.2f')
+	    	np.savetxt(f, line, fmt='%.2f')
 	    f.close()
 
 	file_name = "col_idx_test_max_position_embeddings.txt"
