@@ -25,6 +25,7 @@ The #Especification parts there is a lot you can do, but so far the ones I have 
 #SBATCH -N 2 -> _Here you will set up the number of nodes you want to use_
 #SBATCH --mem=64000 -> _Here you will set up the amount of memory you want to use (in MB). Don't worry, if ask more tham the GPU you are assigned for it will crash instantly._
 #SBATCH --time= 05:00:00 -> _Here I am setting it to run for 5 hours. The default is 5. There is probably a way to do remove time limits, but you gotta aske Rich, I don't know how to do it._
+#SBATCH --nodelist=c0076 -> _Here you will be selecting an specific node (this one in particular is a A100 node)_
 
 Honestly, all the tests I ran I used only those, but there a couple more. The one that would be useful is choosing the GPU you want.
 
@@ -39,7 +40,7 @@ As soon as you do sbatch you receive you process ID and a slurm<Process ID>.out 
 And the a handfull of useful stuff is:
 * squeue: allows you to see the processes that are running and for how long they have been running (so you can see if it is all fine with your process)
 * scancel: will allow to kill your process
-* scontrol show list: you will be able to see the specifications of the available units.
+* scontrol show nodes: you will be able to see the specifications of the available units.
 
 2. Conda and packages
 

@@ -7,6 +7,7 @@ import math
 from prettytable import PrettyTable
 from dataclasses import dataclass
 import time
+import gc
 
 def print_params(module, print_vals=True):
 	params_table = PrettyTable(['module', 'num_params', 'requires_grad'])
@@ -371,14 +372,15 @@ def main():
 				test_input_ids = torch.randint(low=0, high=test_speed_config.max_position_embeddings - 1, \
 					size=(test_speed_config.batch_size, test_speed_config.max_position_embeddings - 1))
 
+				mha_results[k,j] = 0
+				togepi_result[k,j] = 0
+
 				test_emb_obj = Embedding(test_speed_config)
 				test_emb = test_emb_obj(test_input_ids)
 
-				test_mha_obj = MultiHeadAttention(test_speed_config)
-				test_togepi_mha_obj = TogepiMultiHeadAttention(test_speed_config)
 
-				mha_results[k,j] = 0
-				togepi_result[k,j] = 0
+
+				test_mha_obj = MultiHeadAttention(test_speed_config)
 
 				for _ in range(nb_episodes):
 					start = time.time()
@@ -387,12 +389,24 @@ def main():
 					mha_results[k,j] += end - start
 				mha_results[k,j] = mha_results[k,j]/nb_episodes
 
+				del test_mha_obj
+				del test_mha_emb
+				del test_mha_filters
+				gc.collect()
+
+				test_togepi_mha_obj = TogepiMultiHeadAttention(test_speed_config)
+
 				for _ in range(nb_episodes):
 					start = time.time()
-					ttest_togepi_mha_emb = test_togepi_mha_obj(test_emb)
+					ttest_togepi_emb = test_togepi_mha_obj(test_emb)
 					end = time.time()
 					togepi_result[k,j] += end - start
 				togepi_result[k,j] = togepi_result[k,j]/nb_episodes
+
+				del test_togepi_mha_obj
+				del ttest_togepi_emb
+				del test_emb
+				gc.collect()
 
 		file_name = "Z_Results_Heads_"+str(nub_heads[i])+"_mha"+".txt"
 		f = open("/mnt/beegfs/bulk/stripe/lm865/TimeResults/"+file_name,'wb')
