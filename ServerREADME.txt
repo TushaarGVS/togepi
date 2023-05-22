@@ -41,6 +41,7 @@ And the a handfull of useful stuff is:
 * squeue: allows you to see the processes that are running and for how long they have been running (so you can see if it is all fine with your process)
 * scancel: will allow to kill your process
 * scontrol show nodes: you will be able to see the specifications of the available units.
+* sinfo -o "%20N  %10c  %10m  %50G": see all the available units
 
 2. Conda and packages
 
@@ -75,7 +76,7 @@ Enter
 Enter
 eval "$(ssh-agent -s)"
 ssh-add ~/.ssh/id_ed25519
-cat ~/.ssh/id_ed25519
+cat ~/.ssh/id_ed25519.pub
 
 Copy the key, add it to your gitHub account and you are all set! 
 
