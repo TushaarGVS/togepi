@@ -35,10 +35,8 @@ def main(config_path, base_path_to_store_results, tokenizer_path, tokenized_hf_d
     togepi_tokenizer = TogepiTokenizer.load(tokenizer_path)
     tok_hf_dataset = datasets.load_from_disk(dataset_path=tokenized_hf_dataset_path)
     tok_val_data, tok_test_data = None, None
-    if 'val' in tok_hf_dataset:
-        tok_val_data = tok_hf_dataset['val']
-    if 'test' in tok_hf_dataset:
-        tok_test_data = tok_hf_dataset['test']
+    if 'validation' in tok_hf_dataset:
+        tok_val_data = tok_hf_dataset['validation']
 
     transformer = Transformer(vocab_size=togepi_tokenizer.vocab_size,
                               padding_idx=togepi_tokenizer.pad_token_id, **config['transformer']['args'])
@@ -52,7 +50,7 @@ def main(config_path, base_path_to_store_results, tokenizer_path, tokenized_hf_d
     elif pretrained_model_path is not None:
         transformer.from_pretrained(model_save_path=pretrained_model_path)
 
-    trainer.train_and_eval(**config['train_and_eval']['args']['generator'])
+    trainer.train_and_eval(**config['train_and_eval']['args'])
 
     tracker.done()
 

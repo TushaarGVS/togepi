@@ -2,8 +2,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch import autocast
-from torch.cuda.amp import GradScaler
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm, trange
 
@@ -17,8 +15,8 @@ from togepi.schedulers.noam import NoamLrScheduler
 class Trainer(nn.Module):
     def __init__(self, model: Transformer, optim, tok_train_data, tok_val_data, loss_fn=nn.CrossEntropyLoss,
                  noam_num_warmup_steps=4000, noam_factor=1.0, rop_patience=5, rop_factor=0.1, sparse_dens=0.3,
-                 sparse_penalty_lambda=0.05, labels_ignore_idx=0, gradient_clip_value=None, use_amp=True, num_workers=0,
-                 tracker=None, device=torch.device('cpu')):
+                 sparse_penalty_lambda=0.05, labels_ignore_idx=0, gradient_clip_value=None, num_workers=0, tracker=None,
+                 device=torch.device('cpu')):
         super().__init__()
 
         self.device = device
@@ -26,17 +24,11 @@ class Trainer(nn.Module):
         self.tracker = tracker
 
         self.optim = optim
+        self.gradient_clip_value = gradient_clip_value
         # https://www.reddit.com/r/MachineLearning/comments/oy3co1/comment/h7qzshz
         self.noam_scheduler = NoamLrScheduler(self.optim, warmup_steps=noam_num_warmup_steps,
                                               d_model=self.model.enc.emb.embedding_dim, factor=noam_factor)
         self.rop_scheduler = ReduceLROnPlateau(self.optim, mode='min', patience=rop_patience, factor=rop_factor)
-
-        self.gradient_clip_value = gradient_clip_value
-        self.use_amp = use_amp
-        if self.device.type != 'cuda':
-            # https://discuss.pytorch.org/t/error-while-using-16-bit-floats-half/139465/2
-            self.use_amp = False
-        self.grad_scaler = GradScaler(enabled=self.use_amp)
 
         self.num_workers = num_workers
         self.tok_train_data = get_torch_dataset(tok_train_data)
@@ -66,8 +58,7 @@ class Trainer(nn.Module):
                     'model_state_dict': self.model.state_dict(),
                     'optim_state_dict': self.optim.state_dict(),
                     'noam_scheduler_state_dict': self.noam_scheduler.state_dict(),
-                    'rop_scheduler_state_dict': self.rop_scheduler.state_dict(),
-                    'scaler_state_dict': self.grad_scaler.state_dict()}, checkpoint_path)
+                    'rop_scheduler_state_dict': self.rop_scheduler.state_dict()}, checkpoint_path)
 
     def load_from_checkpoint(self, checkpoint_path):
         checkpoint = torch.load(checkpoint_path)
@@ -75,25 +66,25 @@ class Trainer(nn.Module):
         self.optim.load_state_dict(checkpoint['optim_state_dict'])
         self.noam_scheduler.load_state_dict(checkpoint['noam_scheduler_state_dict'])
         self.rop_scheduler.load_state_dict(checkpoint['rop_scheduler_state_dict'])
-        self.grad_scaler.load_state_dict(checkpoint['scaler_state_dict'])
 
         self._start_epoch = checkpoint['epoch'] + 1
 
     def _compute_loss(self, predictions, labels):
-        return self.loss_fn(input=predictions.to(self.device), target=labels.to(self.device))
+        return self.loss_fn(input=predictions.cpu(), target=labels.cpu())
 
     def _compute_ppl(self, predictions, labels):
-        return torch.exp(F.cross_entropy(input=predictions.to(self.device), target=labels.to(self.device),
+        return torch.exp(F.cross_entropy(input=predictions.cpu(), target=labels.cpu(),
                                          ignore_index=self.labels_ignore_idx))
 
     def _compute_sparsity_penalty(self):
-        max_nonzero = min(1.5 * self.sparse_dens * self.model.max_length * self.model.max_length,
-                          self.model.max_length * self.model.max_length)
+        max_nonzero = min(1.5 * self.sparse_dens * self.model_max_length * self.model_max_length,
+                          self.model_max_length * self.model_max_length)
 
         togepi_sparse_layers = filter(lambda layer: isinstance(layer, TogepiSparse), self.model.modules())
         sparse_nonzero_weight_counts = \
             [np.maximum(0, np.count_nonzero(layer.sparse_mat.clone().cpu().detach().numpy()) - max_nonzero)
              for layer in togepi_sparse_layers]
+        del togepi_sparse_layers  # clear out cuda memory
         return sum(sparse_nonzero_weight_counts)
 
     def _train_epoch(self, dataloader):
@@ -107,33 +98,27 @@ class Trainer(nn.Module):
             # https://efficientdl.com/faster-deep-learning-in-pytorch-a-guide
             self.optim.zero_grad(set_to_none=True)
 
-            with autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.use_amp):
-                lm_output = self.model(input_ids=data_batch['input_ids'].to(self.device),
-                                       token_type_ids=data_batch['token_type_ids'].to(self.device),
-                                       padding_mask=data_batch['attention_mask'].to(self.device))
+            lm_output = self.model(input_ids=data_batch['input_ids'].to(self.device),
+                                   token_type_ids=data_batch['token_type_ids'].to(self.device),
+                                   padding_mask=data_batch['attention_mask'].to(self.device))
 
-                # predictions: (batch_size * (max_length - 1), vocab_size)
-                # labels: (batch_size * (max_length - 1))
-                predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1])
-                labels = data_batch['input_ids'][:, 1:].contiguous().view(-1)
+            # predictions: (batch_size * (max_length - 1), vocab_size)
+            # labels: (batch_size * (max_length - 1))
+            predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1])
+            labels = data_batch['input_ids'][:, 1:].contiguous().view(-1)
 
-                batch_loss = self._compute_loss(predictions=predictions, labels=labels)
-                if self.use_togepi_mha:
-                    # sparse weights penalty
-                    sparse_penalty = self._compute_sparsity_penalty()
-                    batch_loss = \
-                        (1 - self.sparse_penalty_lambda) * batch_loss + self.sparse_penalty_lambda * sparse_penalty
+            batch_loss = self._compute_loss(predictions=predictions, labels=labels)
+            if self.use_togepi_mha:
+                # sparse weights penalty
+                sparse_penalty = self._compute_sparsity_penalty()
+                batch_loss = (1 - self.sparse_penalty_lambda) * batch_loss + self.sparse_penalty_lambda * sparse_penalty
 
-            self.grad_scaler.scale(batch_loss).backward()
+            batch_loss.backward()
             batch_loss = batch_loss.item()
-            self.grad_scaler.unscale_(self.optim)
             if self.gradient_clip_value is not None:
                 nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_value)
-            self.grad_scaler.step(self.optim)
-            self.grad_scaler.update()
-
-            # update lr based on Noam lr scheduling
-            self.noam_scheduler.step()
+            self.optim.step()
+            self.noam_scheduler.step()  # update lr based on Noam lr scheduling
 
             if self.use_togepi_mha:
                 # prune sparse mask based on gradient and weight
@@ -153,14 +138,13 @@ class Trainer(nn.Module):
         self.model.eval()
         with torch.no_grad():
             for data_batch in tqdm(dataloader):
-                with autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.use_amp):
-                    lm_output = self.model(input_ids=data_batch['input_ids'].to(self.device),
-                                           token_type_ids=data_batch['token_type_ids'].to(self.device),
-                                           padding_mask=data_batch['attention_mask'].to(self.device))
-                    predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1])
-                    labels = data_batch['input_ids'][:, 1:].contiguous().view(-1)
+                lm_output = self.model(input_ids=data_batch['input_ids'].to(self.device),
+                                       token_type_ids=data_batch['token_type_ids'].to(self.device),
+                                       padding_mask=data_batch['attention_mask'].to(self.device))
+                predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1])
+                labels = data_batch['input_ids'][:, 1:].contiguous().view(-1)
 
-                    batch_loss = self._compute_loss(predictions=predictions, labels=labels).item()
+                batch_loss = self._compute_loss(predictions=predictions, labels=labels).item()
 
                 # update lr based on reduce-on-plateau lr scheduling
                 self.rop_scheduler.step(batch_loss)
@@ -194,7 +178,7 @@ class Trainer(nn.Module):
 
     @staticmethod
     @torch.no_grad()
-    def test(model, tok_test_data, batch_size=128, use_amp=True, labels_ignore_idx=0, num_workers=0, tracker=None,
+    def test(model, tok_test_data, batch_size=128, labels_ignore_idx=0, num_workers=0, tracker=None,
              device=torch.device('cpu')):
         test_dataloader = get_dataloader(get_torch_dataset(tok_test_data), batch_size=batch_size, shuffle=False,
                                          num_workers=num_workers)
@@ -203,15 +187,14 @@ class Trainer(nn.Module):
         model.eval()
         with torch.no_grad():
             for data_batch in tqdm(test_dataloader):
-                with autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
-                    # lm_output = (batch_size, max_length, vocab_size)
-                    lm_output = model(input_ids=data_batch['input_ids'].to(device),
-                                      token_type_ids=data_batch['token_type_ids'].to(device),
-                                      padding_mask=data_batch['attention_mask'].to(device))
-                    predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1])
-                    labels = data_batch['input_ids'][:, 1:].contiguous().view(-1)
-                    all_predictions.append(predictions)
-                    all_labels.append(labels)
+                # lm_output = (batch_size, max_length, vocab_size)
+                lm_output = model(input_ids=data_batch['input_ids'].to(device),
+                                  token_type_ids=data_batch['token_type_ids'].to(device),
+                                  padding_mask=data_batch['attention_mask'].to(device))
+                predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1])
+                labels = data_batch['input_ids'][:, 1:].contiguous().view(-1)
+                all_predictions.append(predictions)
+                all_labels.append(labels)
 
         test_ppl = F.cross_entropy(input=torch.vstack(all_predictions).to(device),
                                    target=torch.hstack(all_labels).to(device), ignore_index=labels_ignore_idx)

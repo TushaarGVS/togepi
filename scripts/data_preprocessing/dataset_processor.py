@@ -12,7 +12,7 @@ def main(config_path, path_to_store_hf_dataset):
         config = yaml.safe_load(fp)
 
     hf_dataset = datasets.load_dataset(**config['dataset']['args'])
-    if config['remove_empty_text_entries']:
+    if config['dataset']['remove_empty_text_entries']:
         hf_dataset = remove_empty_text_entries(hf_dataset)
     hf_dataset.save_to_disk(path_to_store_hf_dataset)
 
