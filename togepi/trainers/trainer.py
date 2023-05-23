@@ -2,6 +2,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import autocast
+from torch.cuda.amp import GradScaler
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm, trange
 
 from togepi.data_processors.utils import get_torch_dataset, get_dataloader
@@ -26,15 +29,14 @@ class Trainer(nn.Module):
         # https://www.reddit.com/r/MachineLearning/comments/oy3co1/comment/h7qzshz
         self.noam_scheduler = NoamLrScheduler(self.optim, warmup_steps=noam_num_warmup_steps,
                                               d_model=self.model.enc.emb.embedding_dim, factor=noam_factor)
-        self.rop_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optim, mode='min', patience=rop_patience,
-                                                                        factor=rop_factor)
+        self.rop_scheduler = ReduceLROnPlateau(self.optim, mode='min', patience=rop_patience, factor=rop_factor)
 
         self.gradient_clip_value = gradient_clip_value
         self.use_amp = use_amp
         if self.device.type != 'cuda':
             # https://discuss.pytorch.org/t/error-while-using-16-bit-floats-half/139465/2
             self.use_amp = False
-        self.grad_scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+        self.grad_scaler = GradScaler(enabled=self.use_amp)
 
         self.num_workers = num_workers
         self.tok_train_data = get_torch_dataset(tok_train_data)
@@ -105,7 +107,7 @@ class Trainer(nn.Module):
             # https://efficientdl.com/faster-deep-learning-in-pytorch-a-guide
             self.optim.zero_grad(set_to_none=True)
 
-            with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.use_amp):
+            with autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.use_amp):
                 lm_output = self.model(input_ids=data_batch['input_ids'].to(self.device),
                                        token_type_ids=data_batch['token_type_ids'].to(self.device),
                                        padding_mask=data_batch['attention_mask'].to(self.device))
@@ -151,7 +153,7 @@ class Trainer(nn.Module):
         self.model.eval()
         with torch.no_grad():
             for data_batch in tqdm(dataloader):
-                with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.use_amp):
+                with autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.use_amp):
                     lm_output = self.model(input_ids=data_batch['input_ids'].to(self.device),
                                            token_type_ids=data_batch['token_type_ids'].to(self.device),
                                            padding_mask=data_batch['attention_mask'].to(self.device))
@@ -192,5 +194,27 @@ class Trainer(nn.Module):
 
     @staticmethod
     @torch.no_grad()
-    def test(model, tok_test_data):
-        pass
+    def test(model, tok_test_data, batch_size=128, use_amp=True, labels_ignore_idx=0, num_workers=0, tracker=None,
+             device=torch.device('cpu')):
+        test_dataloader = get_dataloader(get_torch_dataset(tok_test_data), batch_size=batch_size, shuffle=False,
+                                         num_workers=num_workers)
+        all_predictions, all_labels = [], []
+
+        model.eval()
+        with torch.no_grad():
+            for data_batch in tqdm(test_dataloader):
+                with autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
+                    # lm_output = (batch_size, max_length, vocab_size)
+                    lm_output = model(input_ids=data_batch['input_ids'].to(device),
+                                      token_type_ids=data_batch['token_type_ids'].to(device),
+                                      padding_mask=data_batch['attention_mask'].to(device))
+                    predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1])
+                    labels = data_batch['input_ids'][:, 1:].contiguous().view(-1)
+                    all_predictions.append(predictions)
+                    all_labels.append(labels)
+
+        test_ppl = F.cross_entropy(input=torch.vstack(all_predictions).to(device),
+                                   target=torch.hstack(all_labels).to(device), ignore_index=labels_ignore_idx)
+        if tracker is not None:
+            tracker.log_metrics(epoch=0, split_name='test', metrics={'ppl': test_ppl})
+        return test_ppl

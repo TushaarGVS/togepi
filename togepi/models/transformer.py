@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from prettytable import PrettyTable
 from torchinfo import summary
 
@@ -68,4 +69,23 @@ class Transformer(nn.Module):
 
     @torch.no_grad()
     def generate(self, input_ids, max_new_tokens, temperature=1.0, num_samples=1, top_k=None):
-        pass
+        num_samples = max(num_samples, 1)
+        model_max_length = self.enc.emb.max_length
+
+        for _ in range(max_new_tokens):
+            # input_ids: (num_samples, prompt_length)
+            input_ids = input_ids if input_ids.shape[1] <= model_max_length else input_ids[:, -model_max_length:]
+            lm_output = self(input_ids=input_ids.to(next(self.parameters()).device))
+            lm_output = lm_output[:, -1, :] / temperature  # (num_samples, vocab_size)
+
+            if top_k is not None:
+                top_k_values, top_k_idxs = torch.topk(lm_output, k=top_k, dim=-1, largest=True, sorted=True)
+                lm_output[lm_output < top_k_values[:, [-1]]] = -torch.inf
+            probs = F.softmax(lm_output, dim=-1)
+            if num_samples > 1:
+                next_input_id = torch.multinomial(probs, num_samples=1)
+            else:
+                _, next_input_id = torch.topk(probs, k=1, dim=-1)
+            input_ids = torch.cat((input_ids, next_input_id), dim=1)
+
+        return input_ids

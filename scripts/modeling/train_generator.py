@@ -32,7 +32,7 @@ def main(config_path, base_path_to_store_results, tokenizer_path, tokenized_hf_d
     else:
         device = torch.device(device)
 
-    togepi_uncased_tokenizer = TogepiTokenizer.load(tokenizer_path)
+    togepi_tokenizer = TogepiTokenizer.load(tokenizer_path)
     tok_hf_dataset = datasets.load_from_disk(dataset_path=tokenized_hf_dataset_path)
     tok_val_data, tok_test_data = None, None
     if 'val' in tok_hf_dataset:
@@ -40,8 +40,8 @@ def main(config_path, base_path_to_store_results, tokenizer_path, tokenized_hf_d
     if 'test' in tok_hf_dataset:
         tok_test_data = tok_hf_dataset['test']
 
-    transformer = Transformer(vocab_size=togepi_uncased_tokenizer.vocab_size,
-                              padding_idx=togepi_uncased_tokenizer.pad_token_id, **config['transformer']['args'])
+    transformer = Transformer(vocab_size=togepi_tokenizer.vocab_size,
+                              padding_idx=togepi_tokenizer.pad_token_id, **config['transformer']['args'])
     optim = Adam(transformer.get_trainable_params(), **config['optim']['args'])
     trainer = Trainer(model=transformer, optim=optim, tracker=tracker, tok_train_data=tok_hf_dataset['train'],
                       tok_val_data=tok_val_data, loss_fn=nn.CrossEntropyLoss, device=device,

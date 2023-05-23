@@ -5,9 +5,12 @@ import datasets
 import yaml
 
 from togepi.data_processors.tokenizers.tokenizer import TogepiTokenizer
+from togepi.utils.utils import set_seed
 
 
 def main(config_path, hf_dataset_path, path_to_store_hf_tokenizer):
+    set_seed(seed=42)
+
     with open(config_path, 'r') as fp:
         config = yaml.safe_load(fp)
 

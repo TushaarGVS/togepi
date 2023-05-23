@@ -44,7 +44,7 @@ trainer:
     noam_num_warmup_steps: 4000
     noam_factor: 1.0
     rop_patience: 5
-    rop_factor: 0.1
+    rop_factor: 0.5
 
 train_and_eval:
   args:
@@ -53,9 +53,16 @@ train_and_eval:
     num_epochs: 20
     checkpoint_every: 1
 
+test:
+  args:
+    batch_size: 128
+    use_amp: True
+    labels_ignore_idx: 0
+    num_workers: 4
+
 generate:
   args:
     max_new_tokens: 100
-    temperature: 1.0
+    temperature: 0.85
     num_samples: 10
     top_k: 50
