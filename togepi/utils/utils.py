@@ -16,7 +16,3 @@ def set_seed(seed=42):
     # Setting `torch.backends.cudnn.benchmark = False` slows down training.
     # Reference: https://pytorch.org/docs/stable/notes/randomness.html.
     torch.backends.cudnn.benchmark = True
-
-
-def device_mapper(input_tensor, device):
-    return input_tensor.to(device) if not input_tensor.device == device else input_tensor

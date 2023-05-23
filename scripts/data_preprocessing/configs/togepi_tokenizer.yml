@@ -1,0 +1,13 @@
+tokenizer:
+  id: 'togepi-uncased'
+  args:
+    name: 'togepi-uncased'
+    vocab_size: 50257
+    special_toks:
+      'unk': '<|unk|>'
+      'pad': '<|pad|>'
+      'endoftext': '<|endoftext|>'
+    lowercase: True
+    punct_behavior: 'isolated'
+    padding_side: 'right'
+    truncation_side: 'right'

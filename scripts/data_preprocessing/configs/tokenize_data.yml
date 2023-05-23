@@ -1,0 +1,5 @@
+tokenize_data:
+  id: 'tokenize_data'
+  args:
+    max_length: 1024
+    text_colname: 'text'
