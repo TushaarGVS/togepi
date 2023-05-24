@@ -106,6 +106,7 @@ class Trainer(nn.Module):
             # labels: (batch_size * (max_length - 1))
             predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1])
             labels = data_batch['input_ids'][:, 1:].contiguous().view(-1)
+            del lm_output  # clear out memory
 
             batch_loss = self._compute_loss(predictions=predictions, labels=labels)
             if self.use_togepi_mha:
@@ -126,6 +127,7 @@ class Trainer(nn.Module):
 
             all_batches_metrics['loss'].append(batch_loss)
             all_batches_metrics['ppl'].append(self._compute_ppl(predictions=predictions, labels=labels))
+            del predictions, labels  # clear out memory
 
         for metric in all_batches_metrics.keys():
             epoch_metrics[metric] = sum(all_batches_metrics[metric]) / len(dataloader)
@@ -143,6 +145,7 @@ class Trainer(nn.Module):
                                        padding_mask=data_batch['attention_mask'].to(self.device))
                 predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1])
                 labels = data_batch['input_ids'][:, 1:].contiguous().view(-1)
+                del lm_output  # clear out memory
 
                 batch_loss = self._compute_loss(predictions=predictions, labels=labels).item()
 
@@ -151,6 +154,7 @@ class Trainer(nn.Module):
 
                 all_batches_metrics['loss'].append(batch_loss)
                 all_batches_metrics['ppl'].append(self._compute_ppl(predictions=predictions, labels=labels))
+                del predictions, labels  # clear out memory
 
         for metric in all_batches_metrics.keys():
             epoch_metrics[metric] = sum(all_batches_metrics[metric]) / len(dataloader)
@@ -166,6 +170,7 @@ class Trainer(nn.Module):
                                               num_samples=num_steps_per_epoch, num_workers=self.num_workers)
             train_metrics = self._train_epoch(train_dataloader)
             val_metrics = self._eval_epoch(val_dataloader) if val_dataloader is not None else None
+            del train_dataloader  # clear out memory
 
             if self.tracker is not None:
                 self.tracker.log_metrics(epoch=epoch, split_name='train', metrics=train_metrics)
@@ -195,6 +200,7 @@ class Trainer(nn.Module):
                 labels = data_batch['input_ids'][:, 1:].contiguous().view(-1)
                 all_predictions.append(predictions)
                 all_labels.append(labels)
+                del lm_output, predictions, labels  # clear out memory
 
         test_ppl = F.cross_entropy(input=torch.vstack(all_predictions).to(device),
                                    target=torch.hstack(all_labels).to(device), ignore_index=labels_ignore_idx)
