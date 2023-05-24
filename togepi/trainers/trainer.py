@@ -92,17 +92,15 @@ class Trainer(nn.Module):
 
         return np.average(sparse_nonzero_weight_counts)
 
-    def _train_epoch(self, dataloader):
+    def _train_epoch(self, dataloader, grad_update_every=1):
         all_batches_metrics = {'loss': [], 'ppl': []}
         epoch_metrics = {}
 
         # https://pytorch.org/blog/accelerating-training-on-nvidia-gpus-with-pytorch-automatic-mixed-precision/
         # https://pytorch.org/docs/stable/notes/amp_examples.html
         self.model.train()
-        for data_batch in tqdm(dataloader):
-            # https://efficientdl.com/faster-deep-learning-in-pytorch-a-guide
-            self.optim.zero_grad(set_to_none=True)
-
+        self.optim.zero_grad(set_to_none=True)  # https://efficientdl.com/faster-deep-learning-in-pytorch-a-guide
+        for batch_idx, data_batch in enumerate(tqdm(dataloader)):
             input_ids = data_batch['input_ids'].to(self.device)
             token_type_ids = data_batch['token_type_ids'].to(self.device)
             padding_mask = data_batch['attention_mask'].to(self.device)
@@ -121,21 +119,27 @@ class Trainer(nn.Module):
                 sparse_penalty = self._compute_sparsity_penalty()
                 batch_loss = (1 - self.sparse_penalty_lambda) * batch_loss + self.sparse_penalty_lambda * sparse_penalty
 
+            batch_loss = batch_loss / grad_update_every
             batch_loss.backward()
             batch_loss = batch_loss.item()
-            if self.gradient_clip_value is not None:
-                nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_value)
-            self.optim.step()
-            self.noam_scheduler.step()  # update lr based on Noam lr scheduling
+            #  grad accumulation: https://gist.github.com/thomwolf/ac7a7da6b1888c2eeac8ac8b9b05d3d3
+            if (batch_idx + 1) % grad_update_every == 0 or (batch_idx + 1) == len(dataloader):
+                # https://github.com/huggingface/transformers/blob/v4.18.0/src/transformers/trainer.py
+                if self.gradient_clip_value is not None:
+                    nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_value)
+                self.optim.step()
+                self.noam_scheduler.step()  # update lr based on Noam lr scheduling
 
-            if self.use_togepi_mha:
                 # prune sparse mask based on gradient and weight
-                self.model = prune_sparse(self.model, sparse_dens=self.sparse_dens,
-                                          use_spectral_norm=self.use_spectral_norm)
+                if self.use_togepi_mha:
+                    self.model = prune_sparse(self.model, sparse_dens=self.sparse_dens,
+                                              use_spectral_norm=self.use_spectral_norm)
+
+                self.optim.zero_grad(set_to_none=True)
 
             all_batches_metrics['loss'].append(batch_loss)
             all_batches_metrics['ppl'].append(self._compute_ppl(predictions=predictions, labels=labels))
-            del predictions, labels  # clear out memory
+            del predictions, labels, batch_loss  # clear out memory
 
         for metric in all_batches_metrics.keys():
             epoch_metrics[metric] = sum(all_batches_metrics[metric]) / len(dataloader)
@@ -159,18 +163,18 @@ class Trainer(nn.Module):
                 del lm_output  # clear out memory
 
                 batch_loss = self._compute_loss(predictions=predictions, labels=labels).item()
-                # update lr based on reduce-on-plateau lr scheduling
-                self.rop_scheduler.step(batch_loss)
+                self.rop_scheduler.step(batch_loss)  # update lr based on reduce-on-plateau lr scheduling
 
                 all_batches_metrics['loss'].append(batch_loss)
                 all_batches_metrics['ppl'].append(self._compute_ppl(predictions=predictions, labels=labels))
-                del predictions, labels  # clear out memory
+                del predictions, labels, batch_loss  # clear out memory
 
         for metric in all_batches_metrics.keys():
             epoch_metrics[metric] = sum(all_batches_metrics[metric]) / len(dataloader)
         return epoch_metrics
 
-    def train_and_eval(self, batch_size=64, num_steps_per_epoch=None, num_epochs=8, checkpoint_every=10):
+    def train_and_eval(self, batch_size=64, grad_update_every=1, num_steps_per_epoch=None, num_epochs=8,
+                       checkpoint_every=10):
         val_dataloader = None
         if self.tok_val_data is not None:
             val_dataloader = get_dataloader(self.tok_val_data, batch_size=batch_size, shuffle=False,
@@ -178,7 +182,7 @@ class Trainer(nn.Module):
         for epoch in trange(self._start_epoch, self._start_epoch + num_epochs, 1):
             train_dataloader = get_dataloader(self.tok_train_data, batch_size=batch_size, shuffle=True,
                                               num_samples=num_steps_per_epoch, num_workers=self.num_workers)
-            train_metrics = self._train_epoch(train_dataloader)
+            train_metrics = self._train_epoch(train_dataloader, grad_update_every=grad_update_every)
             val_metrics = self._eval_epoch(val_dataloader) if val_dataloader is not None else None
             del train_dataloader  # clear out memory
 
