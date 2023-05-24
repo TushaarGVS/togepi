@@ -7,8 +7,8 @@ transformer:
     embedding_dim: 768
     num_token_types: 2
     hidden_dim: 768
-    num_enc_layers: 12
-    num_attn_heads: 12
+    num_enc_layers: 8
+    num_attn_heads: 8
     max_position_embeddings: 513
     use_togepi_mha: True
     softmax_psf_weights: True
