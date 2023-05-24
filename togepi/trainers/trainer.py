@@ -76,16 +76,21 @@ class Trainer(nn.Module):
         return torch.exp(F.cross_entropy(input=predictions.cpu(), target=labels.cpu(),
                                          ignore_index=self.labels_ignore_idx))
 
-    def _compute_sparsity_penalty(self):
-        max_nonzero = min(1.5 * self.sparse_dens * self.model_max_length * self.model_max_length,
-                          self.model_max_length * self.model_max_length)
+    def __count_nonzero_sparse_vals(self, layer):
+        if self.use_spectral_norm:
+            return np.count_nonzero(layer.sparse_mat_orig.clone().cpu().detach().numpy())
+        else:
+            return np.count_nonzero(layer.sparse_mat.clone().cpu().detach().numpy())
 
+    def _compute_sparsity_penalty(self):
+        total_vals = self.model_max_length * self.model_max_length
         togepi_sparse_layers = filter(lambda layer: isinstance(layer, TogepiSparse), self.model.modules())
         sparse_nonzero_weight_counts = \
-            [np.maximum(0, np.count_nonzero(layer.sparse_mat.clone().cpu().detach().numpy()) - max_nonzero)
+            [np.maximum(0, (self.__count_nonzero_sparse_vals(layer) / total_vals) - (1.5 * self.sparse_dens))
              for layer in togepi_sparse_layers]
         del togepi_sparse_layers  # clear out cuda memory
-        return sum(sparse_nonzero_weight_counts)
+
+        return np.average(sparse_nonzero_weight_counts)
 
     def _train_epoch(self, dataloader):
         all_batches_metrics = {'loss': [], 'ppl': []}
@@ -98,9 +103,11 @@ class Trainer(nn.Module):
             # https://efficientdl.com/faster-deep-learning-in-pytorch-a-guide
             self.optim.zero_grad(set_to_none=True)
 
-            lm_output = self.model(input_ids=data_batch['input_ids'].to(self.device),
-                                   token_type_ids=data_batch['token_type_ids'].to(self.device),
-                                   padding_mask=data_batch['attention_mask'].to(self.device))
+            input_ids = data_batch['input_ids'].to(self.device)
+            token_type_ids = data_batch['token_type_ids'].to(self.device)
+            padding_mask = data_batch['attention_mask'].to(self.device)
+            lm_output = self.model(input_ids=input_ids, token_type_ids=token_type_ids, padding_mask=padding_mask)
+            del input_ids, token_type_ids, padding_mask  # clear out cuda memory
 
             # predictions: (batch_size * (max_length - 1), vocab_size)
             # labels: (batch_size * (max_length - 1))
@@ -123,7 +130,8 @@ class Trainer(nn.Module):
 
             if self.use_togepi_mha:
                 # prune sparse mask based on gradient and weight
-                prune_sparse(self.model, sparse_dens=self.sparse_dens, use_spectral_norm=self.use_spectral_norm)
+                self.model = prune_sparse(self.model, sparse_dens=self.sparse_dens,
+                                          use_spectral_norm=self.use_spectral_norm)
 
             all_batches_metrics['loss'].append(batch_loss)
             all_batches_metrics['ppl'].append(self._compute_ppl(predictions=predictions, labels=labels))
@@ -140,15 +148,17 @@ class Trainer(nn.Module):
         self.model.eval()
         with torch.no_grad():
             for data_batch in tqdm(dataloader):
-                lm_output = self.model(input_ids=data_batch['input_ids'].to(self.device),
-                                       token_type_ids=data_batch['token_type_ids'].to(self.device),
-                                       padding_mask=data_batch['attention_mask'].to(self.device))
+                input_ids = data_batch['input_ids'].to(self.device)
+                token_type_ids = data_batch['token_type_ids'].to(self.device)
+                padding_mask = data_batch['attention_mask'].to(self.device)
+                lm_output = self.model(input_ids=input_ids, token_type_ids=token_type_ids, padding_mask=padding_mask)
+                del input_ids, token_type_ids, padding_mask  # clear out cuda memory
+
                 predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1])
                 labels = data_batch['input_ids'][:, 1:].contiguous().view(-1)
                 del lm_output  # clear out memory
 
                 batch_loss = self._compute_loss(predictions=predictions, labels=labels).item()
-
                 # update lr based on reduce-on-plateau lr scheduling
                 self.rop_scheduler.step(batch_loss)
 
@@ -192,10 +202,13 @@ class Trainer(nn.Module):
         model.eval()
         with torch.no_grad():
             for data_batch in tqdm(test_dataloader):
+                input_ids = data_batch['input_ids'].to(device)
+                token_type_ids = data_batch['token_type_ids'].to(device)
+                padding_mask = data_batch['attention_mask'].to(device)
                 # lm_output = (batch_size, max_length, vocab_size)
-                lm_output = model(input_ids=data_batch['input_ids'].to(device),
-                                  token_type_ids=data_batch['token_type_ids'].to(device),
-                                  padding_mask=data_batch['attention_mask'].to(device))
+                lm_output = model(input_ids=input_ids, token_type_ids=token_type_ids, padding_mask=padding_mask)
+                del input_ids, token_type_ids, padding_mask  # clear out cuda memory
+
                 predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1])
                 labels = data_batch['input_ids'][:, 1:].contiguous().view(-1)
                 all_predictions.append(predictions)

@@ -57,9 +57,8 @@ class Transformer(nn.Module):
     def forward(self, input_ids, token_type_ids=None, padding_mask=None):
         emb_all_layers, attn_filters_all_layers = self.enc(input_ids=input_ids, token_type_ids=token_type_ids,
                                                            padding_mask=padding_mask)
-        del input_ids, token_type_ids, padding_mask  # clear out cuda memory
         last_emb = emb_all_layers[-1]
-        del emb_all_layers  # clear out cuda memory
+        del emb_all_layers, attn_filters_all_layers  # clear out cuda memory
         if self._use_lm_head:
             lm_output = self.lm_head(last_emb)
         else:
