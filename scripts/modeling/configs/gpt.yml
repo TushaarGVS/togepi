@@ -27,7 +27,7 @@ optim:
     eps: 1.0e-9
 
 trainer:
-  id: 'togepi_trainer'
+  id: 'trainer'
   args:
     labels_ignore_idx: 0
     gradient_clip_value: 1.0

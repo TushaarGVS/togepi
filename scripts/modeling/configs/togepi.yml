@@ -32,7 +32,7 @@ optim:
     eps: 1.0e-9
 
 trainer:
-  id: 'togepi_trainer'
+  id: 'trainer'
   args:
     sparse_dens: 0.3
     sparse_penalty_lambda: 0.05
