@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import pickle
 
 import jsonlines
 import wandb
@@ -10,7 +11,7 @@ from rich.logging import RichHandler
 
 class Tracker(object):
     def __init__(self, config, base_path_to_store_results, experiment_name, project_name='togepi',
-                 entity_name='cornell-llms', log_to_wandb=True, log_level=logging.DEBUG):
+                 entity_name='cornell-llms', log_to_wandb=True, resume_wandb_logging=False, log_level=logging.DEBUG):
         super().__init__()
 
         self.base_path_to_store_results = base_path_to_store_results
@@ -19,6 +20,7 @@ class Tracker(object):
         self.project_name = project_name
         self.entity_name = entity_name
         self.log_to_wandb = log_to_wandb
+        self.resume_wandb_logging = resume_wandb_logging
         self.log_level = log_level
 
         self._setup()
@@ -38,8 +40,24 @@ class Tracker(object):
                             handlers=[logging.FileHandler(log_path), RichHandler(console=Console(quiet=False))])
 
         if self.log_to_wandb:
-            self._wandb_run = wandb.init(entity=self.entity_name, project=self.project_name,
-                                         name=self.experiment_name, config=self.config)
+            if self.resume_wandb_logging:
+                self._load_run_id()
+                self._wandb_run = wandb.init(id=self.run_id, resume='must')
+            else:
+                self.run_id = wandb.util.generate_id()
+                self._save_run_id()
+                self._wandb_run = wandb.init(entity=self.entity_name, project=self.project_name,
+                                             name=self.experiment_name, config=self.config, id=self.run_id)
+
+    def _save_run_id(self):
+        wandb_info_path = os.path.join(self._run_path, 'wandb_info.pkl')
+        with open(wandb_info_path, 'wb') as f:
+            pickle.dump(self.run_id, f)
+
+    def _load_run_id(self):
+        wandb_info_path = os.path.join(self._run_path, 'wandb_info.pkl')
+        with open(wandb_info_path, 'rb') as f:
+            self.run_id = pickle.load(f)
 
     def log_metrics(self, epoch, split_name, metrics):
         splitwise_metrics_file = os.path.join(self._run_path, f'{split_name}_split_metrics.jsonl')
