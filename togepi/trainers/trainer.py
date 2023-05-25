@@ -121,7 +121,11 @@ class Trainer(nn.Module):
 
             (batch_loss / grad_update_every).backward()  # accumulate gradients
             batch_loss.detach_()  # drop immediate buffers
-            predictions.detach_()  # drop immediate buffers
+
+            # loss accumulation: https://gist.github.com/thomwolf/ac7a7da6b1888c2eeac8ac8b9b05d3d3#gistcomment-4173824
+            all_batches_metrics['loss'].append(batch_loss)
+            all_batches_metrics['ppl'].append(self._compute_ppl(predictions=predictions, labels=labels))
+            del predictions, labels, batch_loss  # clear out memory
 
             #  grad accumulation: https://gist.github.com/thomwolf/ac7a7da6b1888c2eeac8ac8b9b05d3d3
             if (batch_idx + 1) % grad_update_every == 0 or (batch_idx + 1) == len(dataloader):
@@ -137,12 +141,6 @@ class Trainer(nn.Module):
                                               use_spectral_norm=self.use_spectral_norm)
 
                 self.optim.zero_grad(set_to_none=True)  # reset gradients post accumulation
-
-            # loss accumulation: https://gist.github.com/thomwolf/ac7a7da6b1888c2eeac8ac8b9b05d3d3#gistcomment-4173824
-            all_batches_metrics['loss'].append(batch_loss)
-            all_batches_metrics['ppl'].append(self._compute_ppl(predictions=predictions, labels=labels))
-
-            del predictions, labels, batch_loss  # clear out memory
 
         for metric in all_batches_metrics.keys():
             epoch_metrics[metric] = sum(all_batches_metrics[metric]) / len(dataloader)
@@ -166,7 +164,6 @@ class Trainer(nn.Module):
                 del lm_output  # clear out memory
 
                 batch_loss = self._compute_loss(predictions=predictions, labels=labels).item()
-                predictions.detach_()  # drop immediate buffers
                 self.rop_scheduler.step(batch_loss)  # update lr based on reduce-on-plateau lr scheduling
 
                 all_batches_metrics['loss'].append(batch_loss)
