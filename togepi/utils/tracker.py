@@ -68,7 +68,7 @@ class Tracker(object):
         if self.log_to_wandb:
             metrics_ = {f'{split_name}/{metric_key}': value for metric_key, value in metrics.items()}
             metrics_['epoch'] = epoch
-            wandb.log(metrics_)
+            wandb.log(metrics_, step=epoch + 1)
 
         logging.info(f'{split_name} metrics: {metrics_}')
 

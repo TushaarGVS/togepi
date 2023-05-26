@@ -74,7 +74,7 @@ class Trainer(nn.Module):
 
     def _compute_ppl(self, predictions, labels):
         return torch.exp(F.cross_entropy(input=predictions.cpu(), target=labels.cpu(),
-                                         ignore_index=self.labels_ignore_idx))
+                                         ignore_index=self.labels_ignore_idx)).detach()
 
     def __count_nonzero_sparse_vals(self, layer):
         if self.use_spectral_norm:
@@ -109,8 +109,8 @@ class Trainer(nn.Module):
 
             # predictions: (batch_size * (max_length - 1), vocab_size)
             # labels: (batch_size * (max_length - 1))
-            predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1])
-            labels = data_batch['input_ids'][:, 1:].contiguous().view(-1)
+            predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1]).cpu()
+            labels = data_batch['input_ids'][:, 1:].contiguous().view(-1).cpu()
             del lm_output  # clear out memory
 
             batch_loss = self._compute_loss(predictions=predictions, labels=labels)
@@ -123,8 +123,8 @@ class Trainer(nn.Module):
             batch_loss.detach_()  # drop immediate buffers
 
             # loss accumulation: https://gist.github.com/thomwolf/ac7a7da6b1888c2eeac8ac8b9b05d3d3#gistcomment-4173824
-            all_batches_metrics['loss'].append(batch_loss)
-            all_batches_metrics['ppl'].append(self._compute_ppl(predictions=predictions, labels=labels))
+            all_batches_metrics['loss'].append(batch_loss.item())
+            all_batches_metrics['ppl'].append(self._compute_ppl(predictions=predictions, labels=labels).item())
             del predictions, labels, batch_loss  # clear out memory
 
             #  grad accumulation: https://gist.github.com/thomwolf/ac7a7da6b1888c2eeac8ac8b9b05d3d3
@@ -159,15 +159,15 @@ class Trainer(nn.Module):
                 lm_output = self.model(input_ids=input_ids, token_type_ids=token_type_ids, padding_mask=padding_mask)
                 del input_ids, token_type_ids, padding_mask  # clear out cuda memory
 
-                predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1])
-                labels = data_batch['input_ids'][:, 1:].contiguous().view(-1)
+                predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1]).cpu()
+                labels = data_batch['input_ids'][:, 1:].contiguous().view(-1).cpu()
                 del lm_output  # clear out memory
 
                 batch_loss = self._compute_loss(predictions=predictions, labels=labels).item()
                 self.rop_scheduler.step(batch_loss)  # update lr based on reduce-on-plateau lr scheduling
 
                 all_batches_metrics['loss'].append(batch_loss)
-                all_batches_metrics['ppl'].append(self._compute_ppl(predictions=predictions, labels=labels))
+                all_batches_metrics['ppl'].append(self._compute_ppl(predictions=predictions, labels=labels).item())
                 del predictions, labels, batch_loss  # clear out memory
 
         for metric in all_batches_metrics.keys():
@@ -214,14 +214,14 @@ class Trainer(nn.Module):
                 lm_output = model(input_ids=input_ids, token_type_ids=token_type_ids, padding_mask=padding_mask)
                 del input_ids, token_type_ids, padding_mask  # clear out cuda memory
 
-                predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1])
-                labels = data_batch['input_ids'][:, 1:].contiguous().view(-1)
+                predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1]).cpu()
+                labels = data_batch['input_ids'][:, 1:].contiguous().view(-1).cpu()
                 all_predictions.append(predictions)
                 all_labels.append(labels)
                 del lm_output, predictions, labels  # clear out memory
 
         test_ppl = F.cross_entropy(input=torch.vstack(all_predictions).to(device),
-                                   target=torch.hstack(all_labels).to(device), ignore_index=labels_ignore_idx)
+                                   target=torch.hstack(all_labels).to(device), ignore_index=labels_ignore_idx).item()
         if tracker is not None:
             tracker.log_metrics(epoch=0, split_name='test', metrics={'ppl': test_ppl})
         return test_ppl
