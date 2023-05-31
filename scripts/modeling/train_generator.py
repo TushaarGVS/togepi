@@ -1,3 +1,4 @@
+import logging
 import os
 from argparse import ArgumentParser
 
@@ -11,13 +12,14 @@ from togepi.data_processors.tokenizers.tokenizer import TogepiTokenizer
 from togepi.models.transformer import Transformer
 from togepi.trainers.trainer import Trainer
 from togepi.utils.tracker import Tracker
-from togepi.utils.utils import set_seed
+from togepi.utils.utils import set_seed, set_precision
 
 
 def main(config_path, base_path_to_store_results, tokenizer_path, tokenized_hf_dataset_path, pretrained_model_path=None,
          pretrained_checkpoint_path=None, experiment_name='experiment', project_name='togepi', entity_name='',
          log_to_wandb=True, resume_wandb_logging=False):
     set_seed(seed=42)
+    set_precision()
 
     with open(config_path, 'r') as fp:
         config = yaml.safe_load(fp)
@@ -28,7 +30,7 @@ def main(config_path, base_path_to_store_results, tokenizer_path, tokenized_hf_d
 
     device = config['general']['device']
     if device == 'auto':
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     else:
         device = torch.device(device)
 
@@ -40,9 +42,15 @@ def main(config_path, base_path_to_store_results, tokenizer_path, tokenized_hf_d
 
     transformer = Transformer(vocab_size=togepi_tokenizer.vocab_size,
                               padding_idx=togepi_tokenizer.pad_token_id, **config['transformer']['args'])
-    optim = Adam(transformer.get_trainable_params(), **config['optim']['args'])
+    transformer.summary()
+    use_dp = False
+    if torch.cuda.device_count() > 1:
+        logging.info(f'using {torch.cuda.device_count()} gpus ...')
+        use_dp = True
+        transformer = nn.DataParallel(transformer)
+    optim = Adam(transformer.parameters(), **config['optim']['args'])
     trainer = Trainer(model=transformer, optim=optim, tracker=tracker, tok_train_data=tok_hf_dataset['train'],
-                      tok_val_data=tok_val_data, loss_fn=nn.CrossEntropyLoss, device=device,
+                      tok_val_data=tok_val_data, loss_fn=nn.CrossEntropyLoss, use_dp=use_dp, device=device,
                       **config['trainer']['args'])
 
     if pretrained_checkpoint_path is not None:

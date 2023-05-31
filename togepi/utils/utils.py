@@ -16,3 +16,9 @@ def set_seed(seed=42):
     # Setting `torch.backends.cudnn.benchmark = False` slows down training.
     # Reference: https://pytorch.org/docs/stable/notes/randomness.html.
     torch.backends.cudnn.benchmark = True
+
+
+def set_precision():
+    # https://pytorch.org/blog/what-every-user-should-know-about-mixed-precision-training-in-pytorch/
+    torch.backends.cudnn.allow_tf32 = True
+    torch.set_float32_matmul_precision('medium')

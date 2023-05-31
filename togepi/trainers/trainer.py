@@ -15,19 +15,20 @@ from togepi.schedulers.noam import NoamLrScheduler
 class Trainer(nn.Module):
     def __init__(self, model: Transformer, optim, tok_train_data, tok_val_data, loss_fn=nn.CrossEntropyLoss,
                  noam_num_warmup_steps=4000, noam_factor=1.0, rop_patience=5, rop_factor=0.1, sparse_dens=0.3,
-                 sparse_penalty_lambda=0.05, labels_ignore_idx=0, gradient_clip_value=None, num_workers=0, tracker=None,
-                 device=torch.device('cpu')):
+                 sparse_penalty_lambda=0.05, labels_ignore_idx=0, gradient_clip_value=None, num_workers=0, use_dp=False,
+                 tracker=None, device=torch.device('cpu')):
         super().__init__()
 
         self.device = device
         self.model = model.to(device)
+        _enc = self.model.enc if not use_dp else self.model.module.enc  # note the use of data-parallelism
         self.tracker = tracker
 
         self.optim = optim
         self.gradient_clip_value = gradient_clip_value
         # https://www.reddit.com/r/MachineLearning/comments/oy3co1/comment/h7qzshz
         self.noam_scheduler = NoamLrScheduler(self.optim, warmup_steps=noam_num_warmup_steps,
-                                              d_model=self.model.enc.emb.embedding_dim, factor=noam_factor)
+                                              d_model=_enc.emb.embedding_dim, factor=noam_factor)
         self.rop_scheduler = ReduceLROnPlateau(self.optim, mode='min', patience=rop_patience, factor=rop_factor)
 
         self.num_workers = num_workers
@@ -36,15 +37,15 @@ class Trainer(nn.Module):
         if tok_val_data is not None:
             self.tok_val_data = get_torch_dataset(tok_val_data)
 
-        self.use_togepi_mha = self.model.enc.enc_layers[0].use_togepi_mha
+        self.use_togepi_mha = _enc.enc_layers[0].use_togepi_mha
         self.use_spectral_norm = False
         self.sparse_penalty_lambda = 0.0
         self.model_max_length = None
         self.sparse_dens = 1.0
         if self.use_togepi_mha:
-            self.use_spectral_norm = self.model.enc.enc_layers[0].mha.use_spectral_norm
+            self.use_spectral_norm = _enc.enc_layers[0].mha.use_spectral_norm
             self.sparse_penalty_lambda = sparse_penalty_lambda
-            self.model_max_length = self.model.enc.emb.max_length
+            self.model_max_length = _enc.emb.max_length
             if self.sparse_dens is not None:
                 self.sparse_dens = sparse_dens
 

@@ -6,7 +6,7 @@ transformer:
   args:
     embedding_dim: 768
     num_token_types: 2
-    hidden_dim: 768
+    hidden_dim: 1024
     num_enc_layers: 12
     num_attn_heads: 12
     max_position_embeddings: 513
@@ -22,9 +22,10 @@ transformer:
 optim:
   id: 'adam'
   args:
-    lr: 2.0e-3
-    betas: [ 0.9, 0.999 ]
-    eps: 1.0e-9
+    lr: 2.0e-4
+    betas: [ 0.9, 0.98 ]
+    eps: 1.0e-6
+    weight_decay: 0.01
 
 trainer:
   id: 'trainer'
@@ -39,8 +40,8 @@ trainer:
 
 train_and_eval:
   args:
-    batch_size: 4
-    grad_update_every: 8
+    batch_size: 32
+    grad_update_every: 64
     num_steps_per_epoch: null
     num_epochs: 20
     checkpoint_every: 1
