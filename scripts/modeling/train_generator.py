@@ -1,4 +1,3 @@
-import logging
 import os
 from argparse import ArgumentParser
 
@@ -43,14 +42,9 @@ def main(config_path, base_path_to_store_results, tokenizer_path, tokenized_hf_d
     transformer = Transformer(vocab_size=togepi_tokenizer.vocab_size,
                               padding_idx=togepi_tokenizer.pad_token_id, **config['transformer']['args'])
     transformer.summary()
-    use_dp = False
-    if torch.cuda.device_count() > 1:
-        logging.info(f'using {torch.cuda.device_count()} gpus ...')
-        use_dp = True
-        transformer = nn.DataParallel(transformer)
     optim = Adam(transformer.parameters(), **config['optim']['args'])
     trainer = Trainer(model=transformer, optim=optim, tracker=tracker, tok_train_data=tok_hf_dataset['train'],
-                      tok_val_data=tok_val_data, loss_fn=nn.CrossEntropyLoss, use_dp=use_dp, device=device,
+                      tok_val_data=tok_val_data, loss_fn=nn.CrossEntropyLoss, device=device,
                       **config['trainer']['args'])
 
     if pretrained_checkpoint_path is not None:

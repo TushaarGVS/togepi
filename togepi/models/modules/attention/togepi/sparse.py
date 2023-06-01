@@ -25,15 +25,15 @@ class TogepiSparse(nn.Module):
         self.pre_sparse_proj = nn.Linear(in_features=embedding_dim, out_features=embedding_dim)
         nn.init.xavier_normal_(self.pre_sparse_proj.weight.data)
 
-    def forward(self, embeddings, padding_mask=None):
-        # embeddings: (batch_size, max_length, embedding_dim)
+    def forward(self, pre_proj_emb, padding_mask=None):
+        # pre_proj_emb: (batch_size, max_length, embedding_dim)
         # padding_mask: (batch_size, max_length)
-        max_length = embeddings.shape[1]
+        max_length = pre_proj_emb.shape[1]
 
         sparse_data = self.sparse_mat
         if self._causal:
             sparse_data = sparse_data.masked_fill(self.causal_sparse_mask[:max_length, :max_length] == 0, 0)
-        pre_sparse_emb = self.pre_sparse_proj(embeddings)
+        pre_sparse_emb = self.pre_sparse_proj(pre_proj_emb)
         if padding_mask is not None:
             pre_sparse_emb.masked_fill_(padding_mask.unsqueeze(2) == 0, 0)
         return torch.matmul(sparse_data, pre_sparse_emb)

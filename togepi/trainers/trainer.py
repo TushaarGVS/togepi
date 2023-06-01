@@ -1,7 +1,11 @@
+import logging
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import autocast
+from torch.cuda.amp import GradScaler
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm, trange
 
@@ -15,17 +19,32 @@ from togepi.schedulers.noam import NoamLrScheduler
 class Trainer(nn.Module):
     def __init__(self, model: Transformer, optim, tok_train_data, tok_val_data, loss_fn=nn.CrossEntropyLoss,
                  noam_num_warmup_steps=4000, noam_factor=1.0, rop_patience=5, rop_factor=0.1, sparse_dens=0.3,
-                 sparse_penalty_lambda=0.05, labels_ignore_idx=0, gradient_clip_value=None, num_workers=0, use_dp=False,
-                 tracker=None, device=torch.device('cpu')):
+                 sparse_penalty_lambda=0.05, labels_ignore_idx=0, gradient_clip_norm=None, num_workers=0, use_amp=True,
+                 use_dp=True, tracker=None, device=torch.device('cpu')):
         super().__init__()
 
         self.device = device
-        self.model = model.to(device)
-        _enc = self.model.enc if not use_dp else self.model.module.enc  # note the use of data-parallelism
+        self.model = model
+        self._use_dp = False
+        if use_dp and torch.cuda.device_count() > 1:
+            logging.info(f'using {torch.cuda.device_count()} gpus for training ...')
+            self._use_dp = True
+            self.model = nn.DataParallel(self.model)
+        elif use_dp:
+            logging.info(f'ignoring use_dp={use_dp}: only {torch.cuda.device_count()} gpu available')
+        self.model = self.model.to(self.device)
+        _enc = self.model.enc if not self._use_dp else self.model.module.enc  # note the use of data-parallelism
         self.tracker = tracker
 
+        self.use_amp = use_amp
+        if self.device.type != 'cuda':
+            # https://discuss.pytorch.org/t/error-while-using-16-bit-floats-half/139465/2
+            logging.info(f'ignoring use_amp={use_amp}: device not supported')
+            self.use_amp = False
+        self.grad_scaler = GradScaler(enabled=self.use_amp)
+
         self.optim = optim
-        self.gradient_clip_value = gradient_clip_value
+        self.gradient_clip_norm = gradient_clip_norm
         # https://www.reddit.com/r/MachineLearning/comments/oy3co1/comment/h7qzshz
         self.noam_scheduler = NoamLrScheduler(self.optim, warmup_steps=noam_num_warmup_steps,
                                               d_model=_enc.emb.embedding_dim, factor=noam_factor)
@@ -56,7 +75,7 @@ class Trainer(nn.Module):
 
     def save_checkpoint(self, epoch, checkpoint_path):
         torch.save({'epoch': epoch,
-                    'model_state_dict': self.model.state_dict(),
+                    'model_state_dict': self.model.state_dict() if not self._use_dp else self.model.module.state_dict(),
                     'optim_state_dict': self.optim.state_dict(),
                     'noam_scheduler_state_dict': self.noam_scheduler.state_dict(),
                     'rop_scheduler_state_dict': self.rop_scheduler.state_dict()}, checkpoint_path)
@@ -71,10 +90,18 @@ class Trainer(nn.Module):
         self._start_epoch = checkpoint['epoch'] + 1
 
     def _compute_loss(self, predictions, labels):
-        return self.loss_fn(input=predictions.cpu(), target=labels.cpu())
+        return self.loss_fn(input=predictions.cpu().float(), target=labels.cpu())
+
+    def _compute_entropy(self, predictions, labels):
+        return F.cross_entropy(input=predictions.cpu().float(), target=labels.cpu(),
+                               ignore_index=self.labels_ignore_idx).detach()
+
+    @staticmethod
+    def _compute_ppl_from_entropy(entropy):
+        return torch.exp(entropy).detach()
 
     def _compute_ppl(self, predictions, labels):
-        return torch.exp(F.cross_entropy(input=predictions.cpu(), target=labels.cpu(),
+        return torch.exp(F.cross_entropy(input=predictions.cpu().float(), target=labels.cpu(),
                                          ignore_index=self.labels_ignore_idx)).detach()
 
     def __count_nonzero_sparse_vals(self, layer):
@@ -86,9 +113,9 @@ class Trainer(nn.Module):
     def _compute_sparsity_penalty(self):
         total_vals = self.model_max_length * self.model_max_length
         togepi_sparse_layers = filter(lambda layer: isinstance(layer, TogepiSparse), self.model.modules())
-        sparse_nonzero_weight_counts = \
-            [np.maximum(0, (self.__count_nonzero_sparse_vals(layer) / total_vals) - (1.5 * self.sparse_dens))
-             for layer in togepi_sparse_layers]
+        sparse_nonzero_weight_counts = [
+            np.maximum(0, (self.__count_nonzero_sparse_vals(layer) / total_vals) - (1.5 * self.sparse_dens)) for layer
+            in togepi_sparse_layers]
         del togepi_sparse_layers  # clear out cuda memory
 
         return np.average(sparse_nonzero_weight_counts)
@@ -101,40 +128,46 @@ class Trainer(nn.Module):
         # https://pytorch.org/docs/stable/notes/amp_examples.html
         self.model.train()
         self.optim.zero_grad(set_to_none=True)  # https://efficientdl.com/faster-deep-learning-in-pytorch-a-guide
+        accumulated_loss, accumulated_entropies = 0.0, []
         for batch_idx, data_batch in enumerate(tqdm(dataloader)):
-            input_ids = data_batch['input_ids'].to(self.device)
-            token_type_ids = data_batch['token_type_ids'].to(self.device)
-            padding_mask = data_batch['attention_mask'].to(self.device)
-            lm_output = self.model(input_ids=input_ids, token_type_ids=token_type_ids, padding_mask=padding_mask)
-            del input_ids, token_type_ids, padding_mask  # clear out cuda memory
+            # https://pytorch.org/tutorials/recipes/recipes/amp_recipe.html
+            with autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.use_amp):
+                input_ids = data_batch['input_ids'].to(self.device)
+                token_type_ids = data_batch['token_type_ids'].to(self.device)
+                padding_mask = data_batch['attention_mask'].to(self.device)
+                lm_output = self.model(input_ids=input_ids, token_type_ids=token_type_ids, padding_mask=padding_mask)
+                del input_ids, token_type_ids, padding_mask  # clear out cuda memory
 
-            # predictions: (batch_size * (max_length - 1), vocab_size)
-            # labels: (batch_size * (max_length - 1))
-            predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1]).cpu()
-            labels = data_batch['input_ids'][:, 1:].contiguous().view(-1).cpu()
-            del lm_output  # clear out memory
+                # predictions: (batch_size * (max_length - 1), vocab_size)
+                # labels: (batch_size * (max_length - 1))
+                predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1]).cpu()
+                labels = data_batch['input_ids'][:, 1:].contiguous().view(-1).cpu()
+                del lm_output  # clear out memory
 
-            batch_loss = self._compute_loss(predictions=predictions, labels=labels)
-            if self.use_togepi_mha:
-                # sparse weights penalty
-                sparse_penalty = self._compute_sparsity_penalty()
-                batch_loss = (1 - self.sparse_penalty_lambda) * batch_loss + self.sparse_penalty_lambda * sparse_penalty
-
-            (batch_loss / grad_update_every).backward()  # accumulate gradients
+                batch_loss = self._compute_loss(predictions=predictions, labels=labels)
+                if self.use_togepi_mha:
+                    # sparse weights penalty
+                    sparse_penalty = self._compute_sparsity_penalty()
+                    batch_loss = \
+                        (1 - self.sparse_penalty_lambda) * batch_loss + self.sparse_penalty_lambda * sparse_penalty
+                batch_loss = batch_loss / grad_update_every
+            self.grad_scaler.scale(batch_loss.to(self.device)).backward()  # accumulate gradients
             batch_loss.detach_()  # drop immediate buffers
 
             # loss accumulation: https://gist.github.com/thomwolf/ac7a7da6b1888c2eeac8ac8b9b05d3d3#gistcomment-4173824
-            all_batches_metrics['loss'].append(batch_loss.item())
-            all_batches_metrics['ppl'].append(self._compute_ppl(predictions=predictions, labels=labels).item())
+            accumulated_loss = accumulated_loss + batch_loss.item()
+            accumulated_entropies.append(self._compute_entropy(predictions=predictions, labels=labels).item())
             del predictions, labels, batch_loss  # clear out memory
 
             #  grad accumulation: https://gist.github.com/thomwolf/ac7a7da6b1888c2eeac8ac8b9b05d3d3
             if (batch_idx + 1) % grad_update_every == 0 or (batch_idx + 1) == len(dataloader):
+                self.grad_scaler.unscale_(self.optim)  # unscale for clipping
                 # https://github.com/huggingface/transformers/blob/v4.18.0/src/transformers/trainer.py
-                if self.gradient_clip_value is not None:
-                    nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_value)
-                self.optim.step()
+                if self.gradient_clip_norm is not None:
+                    nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_norm)
+                self.grad_scaler.step(self.optim)
                 self.noam_scheduler.step()  # update lr based on Noam lr scheduling
+                self.grad_scaler.update()
 
                 # prune sparse mask based on gradient and weight
                 if self.use_togepi_mha:
@@ -143,8 +176,13 @@ class Trainer(nn.Module):
 
                 self.optim.zero_grad(set_to_none=True)  # reset gradients post accumulation
 
+                all_batches_metrics['loss'].append(accumulated_loss)
+                accumulated_entropy = torch.tensor(np.average(accumulated_entropies))
+                all_batches_metrics['ppl'].append(self._compute_ppl_from_entropy(entropy=accumulated_entropy).item())
+                accumulated_loss, accumulated_entropies = 0.0, []  # reset accumulators
+
         for metric in all_batches_metrics.keys():
-            epoch_metrics[metric] = sum(all_batches_metrics[metric]) / len(dataloader)
+            epoch_metrics[metric] = np.average(all_batches_metrics[metric])
         return epoch_metrics
 
     def _eval_epoch(self, dataloader):
@@ -154,17 +192,20 @@ class Trainer(nn.Module):
         self.model.eval()
         with torch.no_grad():
             for data_batch in tqdm(dataloader):
-                input_ids = data_batch['input_ids'].to(self.device)
-                token_type_ids = data_batch['token_type_ids'].to(self.device)
-                padding_mask = data_batch['attention_mask'].to(self.device)
-                lm_output = self.model(input_ids=input_ids, token_type_ids=token_type_ids, padding_mask=padding_mask)
-                del input_ids, token_type_ids, padding_mask  # clear out cuda memory
+                # https://discuss.pytorch.org/t/mixed-precision-for-validation/92319/2
+                with autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.use_amp):
+                    input_ids = data_batch['input_ids'].to(self.device)
+                    token_type_ids = data_batch['token_type_ids'].to(self.device)
+                    padding_mask = data_batch['attention_mask'].to(self.device)
+                    lm_output = self.model(input_ids=input_ids, token_type_ids=token_type_ids,
+                                           padding_mask=padding_mask)
+                    del input_ids, token_type_ids, padding_mask  # clear out cuda memory
 
-                predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1]).cpu()
-                labels = data_batch['input_ids'][:, 1:].contiguous().view(-1).cpu()
-                del lm_output  # clear out memory
+                    predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1]).cpu()
+                    labels = data_batch['input_ids'][:, 1:].contiguous().view(-1).cpu()
+                    del lm_output  # clear out memory
 
-                batch_loss = self._compute_loss(predictions=predictions, labels=labels).item()
+                    batch_loss = self._compute_loss(predictions=predictions, labels=labels).item()
                 self.rop_scheduler.step(batch_loss)  # update lr based on reduce-on-plateau lr scheduling
 
                 all_batches_metrics['loss'].append(batch_loss)
@@ -172,7 +213,7 @@ class Trainer(nn.Module):
                 del predictions, labels, batch_loss  # clear out memory
 
         for metric in all_batches_metrics.keys():
-            epoch_metrics[metric] = sum(all_batches_metrics[metric]) / len(dataloader)
+            epoch_metrics[metric] = np.average(all_batches_metrics[metric])
         return epoch_metrics
 
     def train_and_eval(self, batch_size=64, grad_update_every=1, num_steps_per_epoch=None, num_epochs=8,
@@ -195,11 +236,12 @@ class Trainer(nn.Module):
                 if (epoch + 1) % checkpoint_every == 0:
                     self.tracker.save_checkpoint(self, epoch=epoch)
 
-            self.tracker.save_model(self.model)
+        # save model trained for specified num_epochs
+        self.tracker.save_model(self.model) if not self._use_dp else self.tracker.save_model(self.model.module)
 
     @staticmethod
     @torch.no_grad()
-    def test(model, tok_test_data, batch_size=128, labels_ignore_idx=0, num_workers=0, tracker=None,
+    def test(model, tok_test_data, batch_size=128, labels_ignore_idx=0, num_workers=0, use_amp=True, tracker=None,
              device=torch.device('cpu')):
         test_dataloader = get_dataloader(get_torch_dataset(tok_test_data), batch_size=batch_size, shuffle=False,
                                          num_workers=num_workers)
@@ -208,21 +250,22 @@ class Trainer(nn.Module):
         model.eval()
         with torch.no_grad():
             for data_batch in tqdm(test_dataloader):
-                input_ids = data_batch['input_ids'].to(device)
-                token_type_ids = data_batch['token_type_ids'].to(device)
-                padding_mask = data_batch['attention_mask'].to(device)
-                # lm_output = (batch_size, max_length, vocab_size)
-                lm_output = model(input_ids=input_ids, token_type_ids=token_type_ids, padding_mask=padding_mask)
-                del input_ids, token_type_ids, padding_mask  # clear out cuda memory
+                with autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
+                    input_ids = data_batch['input_ids'].to(device)
+                    token_type_ids = data_batch['token_type_ids'].to(device)
+                    padding_mask = data_batch['attention_mask'].to(device)
+                    # lm_output = (batch_size, max_length, vocab_size)
+                    lm_output = model(input_ids=input_ids, token_type_ids=token_type_ids, padding_mask=padding_mask)
+                    del input_ids, token_type_ids, padding_mask  # clear out cuda memory
 
-                predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1]).cpu()
-                labels = data_batch['input_ids'][:, 1:].contiguous().view(-1).cpu()
-                all_predictions.append(predictions)
-                all_labels.append(labels)
-                del lm_output, predictions, labels  # clear out memory
+                    predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1]).cpu()
+                    labels = data_batch['input_ids'][:, 1:].contiguous().view(-1).cpu()
+                    all_predictions.append(predictions)
+                    all_labels.append(labels)
+                    del lm_output, predictions, labels  # clear out memory
 
-        test_ppl = F.cross_entropy(input=torch.vstack(all_predictions).to(device),
-                                   target=torch.hstack(all_labels).to(device), ignore_index=labels_ignore_idx).item()
+        test_ppl = F.cross_entropy(input=torch.vstack(all_predictions).cpu(), target=torch.hstack(all_labels).cpu(),
+                                   ignore_index=labels_ignore_idx).item()
         if tracker is not None:
             tracker.log_metrics(epoch=0, split_name='test', metrics={'ppl': test_ppl})
         return test_ppl
