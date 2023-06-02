@@ -42,15 +42,15 @@ trainer:
 
 train_and_eval:
   args:
-    batch_size: 50
-    grad_update_every: 64
+    batch_size: 256
+    grad_update_every: 16
     num_steps_per_epoch: null
     num_epochs: 20
     checkpoint_every: 1
 
 test:
   args:
-    batch_size: 4
+    batch_size: 128
     labels_ignore_idx: 0
     num_workers: 4
     use_amp: True

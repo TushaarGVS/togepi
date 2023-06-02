@@ -59,16 +59,16 @@ class Tracker(object):
         with open(wandb_info_path, 'rb') as f:
             self.run_id = pickle.load(f)
 
-    def log_metrics(self, epoch, split_name, metrics):
+    def log_metrics(self, epoch_or_step, split_name, metrics, epoch_or_step_id='epoch'):
         splitwise_metrics_file = os.path.join(self._run_path, f'{split_name}_split_metrics.jsonl')
-        metrics_ = {'epoch': epoch, 'metrics': metrics}
+        metrics_ = {epoch_or_step_id: epoch_or_step, 'metrics': metrics}
         with jsonlines.open(splitwise_metrics_file, 'a') as fp:
             fp.write(metrics_)
 
         if self.log_to_wandb:
             metrics_ = {f'{split_name}/{metric_key}': value for metric_key, value in metrics.items()}
-            metrics_['epoch'] = epoch
-            wandb.log(metrics_, step=epoch + 1)
+            metrics_[epoch_or_step_id] = epoch_or_step
+            wandb.log(metrics_)
 
         logging.info(f'{split_name} metrics: {metrics_}')
 

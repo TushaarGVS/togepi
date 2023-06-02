@@ -71,10 +71,13 @@ class Trainer(nn.Module):
         self.labels_ignore_idx = labels_ignore_idx
         self.loss_fn = loss_fn(ignore_index=labels_ignore_idx)
 
-        self._start_epoch = 0  # variable stored to resume training
+        # variables stored to resume training
+        self._epoch = 0
+        self._step = 0
 
-    def save_checkpoint(self, epoch, checkpoint_path):
-        torch.save({'epoch': epoch,
+    def save_checkpoint(self, checkpoint_path):
+        torch.save({'epoch': self._epoch,
+                    'step': self._step,
                     'model_state_dict': self.model.state_dict() if not self._use_dp else self.model.module.state_dict(),
                     'optim_state_dict': self.optim.state_dict(),
                     'noam_scheduler_state_dict': self.noam_scheduler.state_dict(),
@@ -87,7 +90,8 @@ class Trainer(nn.Module):
         self.noam_scheduler.load_state_dict(checkpoint['noam_scheduler_state_dict'])
         self.rop_scheduler.load_state_dict(checkpoint['rop_scheduler_state_dict'])
 
-        self._start_epoch = checkpoint['epoch'] + 1
+        self._epoch = checkpoint['epoch'] + 1
+        self._step = checkpoint['step'] + 1
 
     def _compute_loss(self, predictions, labels):
         return self.loss_fn(input=predictions.cpu().float(), target=labels.cpu())
@@ -98,7 +102,7 @@ class Trainer(nn.Module):
 
     @staticmethod
     def _compute_ppl_from_entropy(entropy):
-        return torch.exp(entropy).detach()
+        return np.exp(entropy)
 
     def _compute_ppl(self, predictions, labels):
         return torch.exp(F.cross_entropy(input=predictions.cpu().float(), target=labels.cpu(),
@@ -110,25 +114,28 @@ class Trainer(nn.Module):
         else:
             return np.count_nonzero(layer.sparse_mat.clone().cpu().detach().numpy())
 
-    def _compute_sparsity_penalty(self):
+    def __compute_sparse_densities(self, sparse_layers):
         total_vals = self.model_max_length * self.model_max_length
+        return [self.__count_nonzero_sparse_vals(layer) / total_vals for layer in sparse_layers]
+
+    def _compute_sparsity_penalty(self):
         togepi_sparse_layers = filter(lambda layer: isinstance(layer, TogepiSparse), self.model.modules())
-        sparse_nonzero_weight_counts = [
-            np.maximum(0, (self.__count_nonzero_sparse_vals(layer) / total_vals) - (1.5 * self.sparse_dens)) for layer
-            in togepi_sparse_layers]
+        sparse_densities = self.__compute_sparse_densities(togepi_sparse_layers)
+        # penalize beyond 1.5 * sparse_dens: 1.5x to account for "boolean or" between gradient and weight value masking
+        sparse_nonzero_weight_dens = [np.maximum(0, dens - (1.5 * self.sparse_dens)) for dens in sparse_densities]
         del togepi_sparse_layers  # clear out cuda memory
 
-        return np.average(sparse_nonzero_weight_counts)
+        return np.average(sparse_nonzero_weight_dens), sparse_densities
 
     def _train_epoch(self, dataloader, grad_update_every=1):
-        all_batches_metrics = {'loss': [], 'ppl': []}
+        all_batches_metrics = {'loss': [], 'ce': [], 'avg_sparse_dens_across_layers': []}
         epoch_metrics = {}
 
         # https://pytorch.org/blog/accelerating-training-on-nvidia-gpus-with-pytorch-automatic-mixed-precision/
         # https://pytorch.org/docs/stable/notes/amp_examples.html
         self.model.train()
         self.optim.zero_grad(set_to_none=True)  # https://efficientdl.com/faster-deep-learning-in-pytorch-a-guide
-        accumulated_loss, accumulated_entropies = 0.0, []
+        accumulated_loss, accumulated_entropies, accumulated_avg_sparse_dens_across_layers = 0.0, [], []
         for batch_idx, data_batch in enumerate(tqdm(dataloader)):
             # https://pytorch.org/tutorials/recipes/recipes/amp_recipe.html
             with autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.use_amp):
@@ -147,7 +154,8 @@ class Trainer(nn.Module):
                 batch_loss = self._compute_loss(predictions=predictions, labels=labels)
                 if self.use_togepi_mha:
                     # sparse weights penalty
-                    sparse_penalty = self._compute_sparsity_penalty()
+                    sparse_penalty, sparse_densities = self._compute_sparsity_penalty()
+                    accumulated_avg_sparse_dens_across_layers.append(np.average(sparse_densities))
                     batch_loss = \
                         (1 - self.sparse_penalty_lambda) * batch_loss + self.sparse_penalty_lambda * sparse_penalty
                 batch_loss = batch_loss / grad_update_every
@@ -177,12 +185,25 @@ class Trainer(nn.Module):
                 self.optim.zero_grad(set_to_none=True)  # reset gradients post accumulation
 
                 all_batches_metrics['loss'].append(accumulated_loss)
-                accumulated_entropy = torch.tensor(np.average(accumulated_entropies))
-                all_batches_metrics['ppl'].append(self._compute_ppl_from_entropy(entropy=accumulated_entropy).item())
-                accumulated_loss, accumulated_entropies = 0.0, []  # reset accumulators
+                all_batches_metrics['ce'].append(np.average(accumulated_entropies))
+                step_metrics = {'loss': accumulated_loss, 'ce': all_batches_metrics['ce'][-1],
+                                'ppl': self._compute_ppl_from_entropy(all_batches_metrics['ce'][-1])}
+                if self.use_togepi_mha:
+                    avg_sparse_dens_across_layers = np.average(accumulated_avg_sparse_dens_across_layers)
+                    all_batches_metrics['avg_sparse_dens_across_layers'].append(avg_sparse_dens_across_layers)
+                    step_metrics['avg_sparse_dens_across_layers'] = avg_sparse_dens_across_layers
+                self.tracker.log_metrics(epoch_or_step=self._step, split_name='train', metrics=step_metrics,
+                                         epoch_or_step_id='step')
+
+                # reset accumulators and update step number
+                accumulated_loss, accumulated_entropies, accumulated_avg_sparse_dens_across_layers = 0.0, [], []
+                self._step = self._step + 1
 
         for metric in all_batches_metrics.keys():
-            epoch_metrics[metric] = np.average(all_batches_metrics[metric])
+            if len(all_batches_metrics[metric]) > 0:
+                epoch_metrics[metric] = np.average(all_batches_metrics[metric])
+        # batched ppl: https://github.com/pytorch/examples/blob/main/word_language_model/main.py
+        epoch_metrics['ppl'] = self._compute_ppl_from_entropy(epoch_metrics['ce'])
         return epoch_metrics
 
     def _eval_epoch(self, dataloader):
@@ -209,11 +230,13 @@ class Trainer(nn.Module):
                 self.rop_scheduler.step(batch_loss)  # update lr based on reduce-on-plateau lr scheduling
 
                 all_batches_metrics['loss'].append(batch_loss)
-                all_batches_metrics['ppl'].append(self._compute_ppl(predictions=predictions, labels=labels).item())
+                all_batches_metrics['ce'].append(self._compute_entropy(predictions=predictions, labels=labels).item())
                 del predictions, labels, batch_loss  # clear out memory
 
         for metric in all_batches_metrics.keys():
             epoch_metrics[metric] = np.average(all_batches_metrics[metric])
+        # batched ppl: https://github.com/pytorch/examples/blob/main/word_language_model/main.py
+        epoch_metrics['ppl'] = self._compute_ppl_from_entropy(epoch_metrics['ce'])
         return epoch_metrics
 
     def train_and_eval(self, batch_size=64, grad_update_every=1, num_steps_per_epoch=None, num_epochs=8,
@@ -222,7 +245,7 @@ class Trainer(nn.Module):
         if self.tok_val_data is not None:
             val_dataloader = get_dataloader(self.tok_val_data, batch_size=batch_size, shuffle=False,
                                             num_samples=num_steps_per_epoch, num_workers=self.num_workers)
-        for epoch in trange(self._start_epoch, self._start_epoch + num_epochs, 1):
+        for epoch in trange(num_epochs):
             train_dataloader = get_dataloader(self.tok_train_data, batch_size=batch_size, shuffle=True,
                                               num_samples=num_steps_per_epoch, num_workers=self.num_workers)
             train_metrics = self._train_epoch(train_dataloader, grad_update_every=grad_update_every)
@@ -230,11 +253,14 @@ class Trainer(nn.Module):
             del train_dataloader  # clear out memory
 
             if self.tracker is not None:
-                self.tracker.log_metrics(epoch=epoch, split_name='train', metrics=train_metrics)
+                self.tracker.log_metrics(epoch_or_step=self._epoch, split_name='train', metrics=train_metrics,
+                                         epoch_or_step_id='epoch')
                 if val_metrics is not None:
-                    self.tracker.log_metrics(epoch=epoch, split_name='val', metrics=val_metrics)
+                    self.tracker.log_metrics(epoch_or_step=self._epoch, split_name='val', metrics=val_metrics,
+                                             epoch_or_step_id='epoch')
                 if (epoch + 1) % checkpoint_every == 0:
-                    self.tracker.save_checkpoint(self, epoch=epoch)
+                    self.tracker.save_checkpoint(self, epoch=self._epoch)
+            self._epoch = self._epoch + 1
 
         # save model trained for specified num_epochs
         self.tracker.save_model(self.model) if not self._use_dp else self.tracker.save_model(self.model.module)
@@ -267,5 +293,5 @@ class Trainer(nn.Module):
         test_ppl = F.cross_entropy(input=torch.vstack(all_predictions).cpu(), target=torch.hstack(all_labels).cpu(),
                                    ignore_index=labels_ignore_idx).item()
         if tracker is not None:
-            tracker.log_metrics(epoch=0, split_name='test', metrics={'ppl': test_ppl})
+            tracker.log_metrics(epoch_or_step=0, split_name='test', metrics={'ppl': test_ppl})
         return test_ppl
