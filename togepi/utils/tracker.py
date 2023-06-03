@@ -42,7 +42,9 @@ class Tracker(object):
         if self.log_to_wandb:
             if self.resume_wandb_logging:
                 self._load_run_id()
-                self._wandb_run = wandb.init(id=self.run_id, resume='must')
+                self._wandb_run = wandb.init(entity=self.entity_name, project=self.project_name,
+                                             name=self.experiment_name, config=self.config, id=self.run_id,
+                                             resume='must')
             else:
                 self.run_id = wandb.util.generate_id()
                 self._save_run_id()
@@ -59,18 +61,19 @@ class Tracker(object):
         with open(wandb_info_path, 'rb') as f:
             self.run_id = pickle.load(f)
 
-    def log_metrics(self, epoch_or_step, split_name, metrics, epoch_or_step_id='epoch'):
+    def log_metrics(self, epoch_or_step, split_name, metrics, epoch_or_step_id='epoch', log_to_console=True):
         splitwise_metrics_file = os.path.join(self._run_path, f'{split_name}_split_metrics.jsonl')
         metrics_ = {epoch_or_step_id: epoch_or_step, 'metrics': metrics}
         with jsonlines.open(splitwise_metrics_file, 'a') as fp:
             fp.write(metrics_)
 
         if self.log_to_wandb:
-            metrics_ = {f'{split_name}/{metric_key}': value for metric_key, value in metrics.items()}
+            metrics_ = {f'{split_name}/{epoch_or_step_id}/{metric_key}': value for metric_key, value in metrics.items()}
             metrics_[epoch_or_step_id] = epoch_or_step
             wandb.log(metrics_)
 
-        logging.info(f'{split_name} metrics: {metrics_}')
+        if log_to_console:
+            logging.info(f'{split_name} metrics: {metrics_}')
 
     def save_model(self, model):
         model_path = os.path.join(self._run_path, 'model.pt')
@@ -78,7 +81,7 @@ class Tracker(object):
 
     def save_checkpoint(self, trainer, epoch):
         checkpoint_path = os.path.join(self._checkpoints_path, f'checkpoint_{epoch}.pt')
-        trainer.save_checkpoint(epoch, checkpoint_path)
+        trainer.save_checkpoint(checkpoint_path)
 
     def done(self):
         if self.log_to_wandb:

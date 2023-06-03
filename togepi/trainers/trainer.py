@@ -193,7 +193,7 @@ class Trainer(nn.Module):
                     all_batches_metrics['avg_sparse_dens_across_layers'].append(avg_sparse_dens_across_layers)
                     step_metrics['avg_sparse_dens_across_layers'] = avg_sparse_dens_across_layers
                 self.tracker.log_metrics(epoch_or_step=self._step, split_name='train', metrics=step_metrics,
-                                         epoch_or_step_id='step')
+                                         epoch_or_step_id='step', log_to_console=False)
 
                 # reset accumulators and update step number
                 accumulated_loss, accumulated_entropies, accumulated_avg_sparse_dens_across_layers = 0.0, [], []
@@ -207,7 +207,7 @@ class Trainer(nn.Module):
         return epoch_metrics
 
     def _eval_epoch(self, dataloader):
-        all_batches_metrics = {'loss': [], 'ppl': []}
+        all_batches_metrics = {'loss': [], 'ce': []}
         epoch_metrics = {}
 
         self.model.eval()

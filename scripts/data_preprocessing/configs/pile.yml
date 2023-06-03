@@ -1,0 +1,6 @@
+dataset:
+  id: 'wikitext-2'
+  remove_empty_text_entries: True
+  args:
+    path: 'EleutherAI/pile'
+    name: 'all'
