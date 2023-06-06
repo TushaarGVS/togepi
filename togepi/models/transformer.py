@@ -54,11 +54,16 @@ class Transformer(nn.Module):
     def from_pretrained(self, model_save_path):
         self.load_state_dict(torch.load(model_save_path))
 
-    def forward(self, input_ids, token_type_ids=None, padding_mask=None):
-        emb_all_layers, attn_filters_all_layers = self.enc(input_ids=input_ids, token_type_ids=token_type_ids,
-                                                           padding_mask=padding_mask)
+    def forward(self, input_ids, token_type_ids=None, padding_mask=None, return_attn_filters_or_psfs=False):
+        emb_all_layers, attn_filters_or_psfs_all_layers = self.enc(input_ids=input_ids, token_type_ids=token_type_ids,
+                                                                   padding_mask=padding_mask)
         last_emb = emb_all_layers[-1]
-        del emb_all_layers, attn_filters_all_layers  # clear out cuda memory
+
+        # clear out cuda memory
+        if not return_attn_filters_or_psfs:
+            del attn_filters_or_psfs_all_layers
+        del emb_all_layers
+
         if self._use_lm_head:
             lm_output = self.lm_head(last_emb)
         else:
@@ -66,7 +71,7 @@ class Transformer(nn.Module):
             # last_emb: (batch_size, max_length, embedding_dim)
             # tok_emb_weight: (vocab_size, embedding_dim)
             lm_output = torch.matmul(last_emb, self.enc.emb.tok_emb.weight.data.transpose(0, 1))
-        return lm_output
+        return lm_output if not return_attn_filters_or_psfs else (lm_output, attn_filters_or_psfs_all_layers)
 
     @torch.no_grad()
     def generate(self, input_ids, max_new_tokens, temperature=1.0, num_samples=1, top_k=None):

@@ -35,7 +35,7 @@ def main(config_path, base_path_to_store_results, tokenizer_path, tokenized_hf_d
 
     togepi_tokenizer = TogepiTokenizer.load(tokenizer_path)
     tok_hf_dataset = datasets.load_from_disk(dataset_path=tokenized_hf_dataset_path)
-    tok_val_data, tok_test_data = None, None
+    tok_val_data = None
     if 'validation' in tok_hf_dataset:
         tok_val_data = tok_hf_dataset['validation']
 

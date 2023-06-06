@@ -7,6 +7,7 @@ class TogepiSparse(nn.Module):
         super().__init__()
 
         max_length = max_position_embeddings - 1  # one position reserved for pad position
+        self._training_max_length = max_length
 
         if sparse_init_dens is not None:
             num_nonzero = int(max_length * max_length * sparse_init_dens)
@@ -31,9 +32,11 @@ class TogepiSparse(nn.Module):
         max_length = pre_proj_emb.shape[1]
 
         sparse_data = self.sparse_mat
+        if self._training_max_length != max_length:
+            sparse_data = sparse_data[:max_length, :max_length]
         if self._causal:
             sparse_data = sparse_data.masked_fill(self.causal_sparse_mask[:max_length, :max_length] == 0, 0)
         pre_sparse_emb = self.pre_sparse_proj(pre_proj_emb)
         if padding_mask is not None:
             pre_sparse_emb.masked_fill_(padding_mask.unsqueeze(2) == 0, 0)
-        return torch.matmul(sparse_data, pre_sparse_emb)
+        return torch.matmul(sparse_data, pre_sparse_emb), sparse_data

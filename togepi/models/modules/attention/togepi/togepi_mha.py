@@ -44,9 +44,11 @@ class TogepiMultiHeadAttention(nn.Module):
             pre_proj_emb.masked_fill_(padding_mask.unsqueeze(2) == 0, 0)
 
         # conv_emb: (batch_size, max_length, embedding_dim)
-        conv_emb = self.toeplitz(pre_proj_emb)
+        # psfs_weights: (num_heads, 2 * max_length - 1, per_head_dim)
+        conv_emb, psfs_weights = self.toeplitz(pre_proj_emb)
         # sparse_emb: (batch_size, max_length, embedding_dim)
-        sparse_emb = self.sparse(pre_proj_emb, padding_mask=padding_mask)
+        # sparse_mat: (mqx_length, max_length)
+        sparse_emb, sparse_mat = self.sparse(pre_proj_emb, padding_mask=padding_mask)
         togepi_emb = self.dropout(conv_emb + sparse_emb) * 1 / self._keep_prob
 
-        return self.layer_norm(togepi_emb + embeddings), None  # None added to keep consistent with bert output format
+        return self.layer_norm(togepi_emb + embeddings), (psfs_weights, sparse_mat)

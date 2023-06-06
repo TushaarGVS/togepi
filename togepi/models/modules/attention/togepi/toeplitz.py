@@ -20,7 +20,7 @@ class TogepiToeplitz(nn.Module):
         self.attn_actn = F.gelu if attn_actn == 'gelu' else F.relu
         self._softmax_psf_weights = softmax_psf_weights
         self.post_conv_proj = nn.Linear(in_features=embedding_dim, out_features=embedding_dim)
-        nn.init.xavier_normal_(self.toeplitz_psfs.data)
+        nn.init.trunc_normal_(self.toeplitz_psfs.data, mean=0.0, std=1.0, a=0.0, b=1.0)
 
         self._causal = causal_attn
         if causal_attn:
@@ -41,15 +41,19 @@ class TogepiToeplitz(nn.Module):
                                                                      self._per_head_dim).permute(0, 2, 1, 3)
 
         psfs_weights = self.toeplitz_psfs
-        if self._causal:
-            if self._training_max_length == max_length:
-                psfs_weights = psfs_weights.masked_fill(self.causal_psf_mask == 0, 0)
-            else:
-                # at inference time, the max_length changes per prompt
-                causal_psf_mask = torch.tensor([1] * max_length + [0] * (max_length - 1)).unsqueeze(0).unsqueeze(2)
-                psfs_weights = psfs_weights.masked_fill(causal_psf_mask == 0, 0)
+        if self._training_max_length == max_length:
+            causal_psf_mask = self.causal_psf_mask
+        else:
+            # at inference time, the max_length changes per prompt
+            curr_prev_toks_psfs_weights = psfs_weights[:, : max_length, :]
+            next_toks_psfs_weights = \
+                psfs_weights[:, self._training_max_length: self._training_max_length + max_length - 1, :]
+            psfs_weights = torch.hstack((curr_prev_toks_psfs_weights, next_toks_psfs_weights))
+            causal_psf_mask = torch.tensor([1] * max_length + [0] * (max_length - 1)).unsqueeze(0).unsqueeze(2)
         if self._softmax_psf_weights:
             psfs_weights = F.softmax(psfs_weights, dim=1)
+        if self._causal:
+            psfs_weights = psfs_weights.masked_fill(causal_psf_mask == 0, 0)
 
         # fft: convolution in time domain is point-wise multiplication in frequency domain
         # note: cuFFT doesn't support half-precision for dimensions that aren't powers of two, which is the case
@@ -63,4 +67,4 @@ class TogepiToeplitz(nn.Module):
         conv_output = self.attn_actn(conv_output).permute(0, 2, 1, 3).reshape(batch_size, max_length, -1)
         conv_emb = self.post_conv_proj(conv_output)
 
-        return conv_emb
+        return conv_emb, psfs_weights

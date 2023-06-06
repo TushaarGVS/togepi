@@ -61,13 +61,13 @@ class Encoder(nn.Module):
 
     def forward(self, input_ids, token_type_ids=None, padding_mask=None):
         embeddings = self.emb(input_ids=input_ids, token_type_ids=token_type_ids, padding_mask=padding_mask)
-        emb_all_layers, attn_filters_all_layers = [], []
+        emb_all_layers, attn_filters_or_psfs_all_layers = [], []
         for enc_layer in self.enc_layers:
             embeddings, attn_filters = enc_layer(embeddings, padding_mask=padding_mask)
             emb_all_layers.append(embeddings)
             if attn_filters is not None:
-                attn_filters_all_layers.append(attn_filters)
+                attn_filters_or_psfs_all_layers.append(attn_filters)
 
-        if len(attn_filters_all_layers) == 0:
-            attn_filters_all_layers = None
-        return emb_all_layers, attn_filters_all_layers
+        if len(attn_filters_or_psfs_all_layers) == 0:
+            attn_filters_or_psfs_all_layers = None
+        return emb_all_layers, attn_filters_or_psfs_all_layers
