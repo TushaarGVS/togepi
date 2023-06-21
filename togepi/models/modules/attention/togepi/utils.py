@@ -33,6 +33,4 @@ def prune_sparse(transformer, sparse_dens, use_spectral_norm=True, return_masks=
             else:
                 module.sparse_mat.data[weight_or_grad_mask == 0.0] = 0.0
             del weight_or_grad_mask  # clear out memory
-    if return_masks:
-        return transformer, masks
-    return transformer
+    return transformer if not return_masks else (transformer, masks)

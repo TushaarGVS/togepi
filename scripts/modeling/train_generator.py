@@ -16,7 +16,7 @@ from togepi.utils.utils import set_seed, set_precision
 
 def main(config_path, base_path_to_store_results, tokenizer_path, tokenized_hf_dataset_path, pretrained_model_path=None,
          pretrained_checkpoint_path=None, experiment_name='experiment', project_name='togepi', entity_name='',
-         log_to_wandb=True, resume_wandb_logging=False):
+         log_to_wandb=True, resume_wandb_logging=False, detect_anomaly=False):
     set_seed(seed=42)
     set_precision()
 
@@ -44,8 +44,8 @@ def main(config_path, base_path_to_store_results, tokenizer_path, tokenized_hf_d
     transformer.summary()
     optim = AdamW(transformer.parameters(), **config['optim']['args'])
     trainer = Trainer(model=transformer, optim=optim, tracker=tracker, tok_train_data=tok_hf_dataset['train'],
-                      tok_val_data=tok_val_data, loss_fn=nn.CrossEntropyLoss, device=device,
-                      **config['trainer']['args'])
+                      tok_val_data=tok_val_data, loss_fn=nn.CrossEntropyLoss, detect_anomaly=detect_anomaly,
+                      device=device, **config['trainer']['args'])
 
     if pretrained_checkpoint_path is not None:
         trainer.load_from_checkpoint(checkpoint_path=pretrained_checkpoint_path)
@@ -74,6 +74,7 @@ if __name__ == '__main__':
     parser.add_argument('--log_to_wandb', action='store_true', help='whether to use wandb logging')
     parser.add_argument('--resume_wandb_logging', action='store_true',
                         help='whether to resume wandb logging from the experiment with the same name')
+    parser.add_argument('--detect_anomaly', action='store_true', help='model runs in autograd anomaly detection mode')
 
     args = parser.parse_args()
 
@@ -81,4 +82,5 @@ if __name__ == '__main__':
          tokenizer_path=args.tokenizer_path, tokenized_hf_dataset_path=args.tokenized_hf_dataset_path,
          pretrained_model_path=args.pretrained_model_path, pretrained_checkpoint_path=args.pretrained_checkpoint_path,
          experiment_name=args.experiment_name, project_name=args.project_name, entity_name=args.entity_name,
-         log_to_wandb=args.log_to_wandb, resume_wandb_logging=args.resume_wandb_logging)
+         log_to_wandb=args.log_to_wandb, resume_wandb_logging=args.resume_wandb_logging,
+         detect_anomaly=args.detect_anomaly)

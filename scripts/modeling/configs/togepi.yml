@@ -36,7 +36,7 @@ trainer:
   id: 'trainer'
   args:
     sparse_dens: 0.3
-    sparse_penalty_lambda: 0.05
+    sparse_penalty_lambda: 0.1
     labels_ignore_idx: 0
     gradient_clip_norm: 1.0
     num_workers: 4

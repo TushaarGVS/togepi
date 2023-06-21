@@ -13,7 +13,7 @@ class TogepiTokenizer(object):
         self.vocab = None
         self.special_toks = special_toks
         if self.special_toks is None:
-            self.special_toks = {'eos': '<|endoftext|>'}
+            self.special_toks = {'pad': '<|pad|>', 'unk': '<|unk|>', 'eos': '<|endoftext|>'}
         for special_tok_name, special_tok in self.special_toks.items():
             self.__dict__.update({f'{special_tok_name}_tok': special_tok})
 
@@ -30,7 +30,7 @@ class TogepiTokenizer(object):
 
     def _build_tokenizer(self, lowercase=True, punct_behavior='contiguous'):
         # https://huggingface.co/learn/nlp-course/chapter6/8?fw=pt
-        self._tokenizer = Tokenizer(model=models.BPE(unk_token=self.eos_tok))
+        self._tokenizer = Tokenizer(model=models.BPE(unk_token=self.unk_tok))
         normalizers_sequence = [normalizers.NFD(), normalizers.StripAccents()]
         if lowercase:
             normalizers_sequence = [normalizers.NFD(), normalizers.Lowercase(), normalizers.StripAccents()]
@@ -72,8 +72,8 @@ class TogepiTokenizer(object):
 
     def _set_pretrained_tokenizer(self, name, padding_side='right', truncation_side='right'):
         self.pretrained_tokenizer = PreTrainedTokenizerFast(name_or_path=name, tokenizer_object=self._tokenizer,
-                                                            eos_token=self.eos_tok, pad_token=self.eos_tok,
-                                                            unk_tok=self.eos_tok, padding_side=padding_side,
+                                                            eos_token=self.eos_tok, pad_token=self.pad_tok,
+                                                            unk_tok=self.unk_tok, padding_side=padding_side,
                                                             truncation_side=truncation_side)
 
     @property

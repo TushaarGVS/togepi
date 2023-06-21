@@ -5,6 +5,8 @@ tokenizer:
     num_merges: 50000
     min_frequency: 2
     special_toks:
+      'pad': '<|pad|>'
+      'unk': '<|unk|>'
       'eos': '<|endoftext|>'
     lowercase: True
     punct_behavior: 'contiguous'

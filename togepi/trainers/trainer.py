@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import autocast
+from torch import autograd
 from torch.cuda.amp import GradScaler
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm, trange
@@ -20,8 +21,12 @@ class Trainer(nn.Module):
     def __init__(self, model: Transformer, optim, tok_train_data, tok_val_data, loss_fn=nn.CrossEntropyLoss,
                  noam_num_warmup_steps=4000, noam_factor=1.0, rop_patience=5, rop_factor=0.1, sparse_dens=0.3,
                  sparse_penalty_lambda=0.05, labels_ignore_idx=0, gradient_clip_norm=None, num_workers=0, use_amp=True,
-                 use_dp=True, tracker=None, device=torch.device('cpu')):
+                 use_dp=True, tracker=None, detect_anomaly=False, device=torch.device('cpu')):
         super().__init__()
+
+        self.detect_anomaly = detect_anomaly
+        if self.detect_anomaly:
+            logging.warning(f'detect_anomaly is set to {detect_anomaly}; this will significantly slow down the speed')
 
         self.device = device
         self.model = model
@@ -110,9 +115,9 @@ class Trainer(nn.Module):
 
     def __count_nonzero_sparse_vals(self, layer):
         if self.use_spectral_norm:
-            return np.count_nonzero(layer.sparse_mat_orig.clone().cpu().detach().numpy())
+            return np.count_nonzero(layer.sparse_mat_orig.detach().cpu().numpy())
         else:
-            return np.count_nonzero(layer.sparse_mat.clone().cpu().detach().numpy())
+            return np.count_nonzero(layer.sparse_mat.detach().cpu().numpy())
 
     def __compute_sparse_densities(self, sparse_layers):
         total_vals = self.model_max_length * self.model_max_length
@@ -131,6 +136,11 @@ class Trainer(nn.Module):
         all_batches_metrics = {'loss': [], 'ce': [], 'avg_sparse_dens_across_layers': []}
         epoch_metrics = {}
 
+        # handle last few batches of gradient updates separately
+        start_step = self._step
+        num_full_steps_per_epoch = len(dataloader) // grad_update_every
+        last_grad_update_every = len(dataloader) % grad_update_every
+
         # https://pytorch.org/blog/accelerating-training-on-nvidia-gpus-with-pytorch-automatic-mixed-precision/
         # https://pytorch.org/docs/stable/notes/amp_examples.html
         self.model.train()
@@ -142,7 +152,8 @@ class Trainer(nn.Module):
                 input_ids = data_batch['input_ids'].to(self.device)
                 token_type_ids = data_batch['token_type_ids'].to(self.device)
                 padding_mask = data_batch['attention_mask'].to(self.device)
-                lm_output = self.model(input_ids=input_ids, token_type_ids=token_type_ids, padding_mask=padding_mask)
+                lm_output = self.model(input_ids=input_ids, token_type_ids=token_type_ids, padding_mask=padding_mask,
+                                       return_attn_filters_or_psfs=False)
                 del input_ids, token_type_ids, padding_mask  # clear out cuda memory
 
                 # predictions: (batch_size * (max_length - 1), vocab_size)
@@ -158,7 +169,8 @@ class Trainer(nn.Module):
                     accumulated_avg_sparse_dens_across_layers.append(np.average(sparse_densities))
                     batch_loss = \
                         (1 - self.sparse_penalty_lambda) * batch_loss + self.sparse_penalty_lambda * sparse_penalty
-                batch_loss = batch_loss / grad_update_every
+                batch_loss = batch_loss / grad_update_every if self._step < start_step + num_full_steps_per_epoch else \
+                    batch_loss / last_grad_update_every
             self.grad_scaler.scale(batch_loss.to(self.device)).backward()  # accumulate gradients
             batch_loss.detach_()  # drop immediate buffers
 
@@ -219,7 +231,7 @@ class Trainer(nn.Module):
                     token_type_ids = data_batch['token_type_ids'].to(self.device)
                     padding_mask = data_batch['attention_mask'].to(self.device)
                     lm_output = self.model(input_ids=input_ids, token_type_ids=token_type_ids,
-                                           padding_mask=padding_mask)
+                                           padding_mask=padding_mask, return_attn_filters_or_psfs=False)
                     del input_ids, token_type_ids, padding_mask  # clear out cuda memory
 
                     predictions = lm_output[:, :-1, :].contiguous().view(-1, lm_output.shape[-1]).cpu()
@@ -248,8 +260,9 @@ class Trainer(nn.Module):
         for epoch in trange(num_epochs):
             train_dataloader = get_dataloader(self.tok_train_data, batch_size=batch_size, shuffle=True,
                                               num_samples=num_steps_per_epoch, num_workers=self.num_workers)
-            train_metrics = self._train_epoch(train_dataloader, grad_update_every=grad_update_every)
-            val_metrics = self._eval_epoch(val_dataloader) if val_dataloader is not None else None
+            with autograd.set_detect_anomaly(self.detect_anomaly, check_nan=True):
+                train_metrics = self._train_epoch(train_dataloader, grad_update_every=grad_update_every)
+                val_metrics = self._eval_epoch(val_dataloader) if val_dataloader is not None else None
             del train_dataloader  # clear out memory
 
             if self.tracker is not None:
