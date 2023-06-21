@@ -16,7 +16,7 @@ def main(config_path, hf_dataset_path, path_to_store_hf_tokenizer):
 
     hf_dataset = datasets.load_from_disk(dataset_path=hf_dataset_path)
     tokenizer = TogepiTokenizer(**config['tokenizer']['args'])
-    tokenizer.train_tokenizer(hf_dataset['train'])
+    tokenizer.train(hf_dataset['train'])
     tokenizer.save(path_to_store_hf_tokenizer)
 
 

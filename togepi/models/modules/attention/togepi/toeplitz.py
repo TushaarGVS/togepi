@@ -45,7 +45,7 @@ class TogepiToeplitz(nn.Module):
             causal_psf_mask = self.causal_psf_mask
         else:
             # at inference time, the max_length changes per prompt
-            curr_prev_toks_psfs_weights = psfs_weights[:, : max_length, :]
+            curr_prev_toks_psfs_weights = psfs_weights[:, :max_length, :]
             next_toks_psfs_weights = \
                 psfs_weights[:, self._training_max_length: self._training_max_length + max_length - 1, :]
             psfs_weights = torch.hstack((curr_prev_toks_psfs_weights, next_toks_psfs_weights))

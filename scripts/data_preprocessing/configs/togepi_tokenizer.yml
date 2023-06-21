@@ -1,13 +1,12 @@
 tokenizer:
-  id: 'togepi-uncased'
+  id: 'togepi-bbpe-uncased'
   args:
-    name: 'togepi-uncased'
-    vocab_size: 50257
+    name: 'togepi-bbpe-uncased'
+    num_merges: 50000
+    min_frequency: 2
     special_toks:
-      'unk': '<|unk|>'
-      'pad': '<|pad|>'
-      'endoftext': '<|endoftext|>'
+      'eos': '<|endoftext|>'
     lowercase: True
-    punct_behavior: 'isolated'
+    punct_behavior: 'contiguous'
     padding_side: 'right'
     truncation_side: 'right'

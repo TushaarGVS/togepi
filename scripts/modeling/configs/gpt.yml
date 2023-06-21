@@ -20,7 +20,7 @@ transformer:
     pad_token_type: 0
 
 optim:
-  id: 'adam'
+  id: 'adamw'
   args:
     lr: 2.0e-4
     betas: [ 0.9, 0.98 ]
@@ -42,8 +42,8 @@ trainer:
 
 train_and_eval:
   args:
-    batch_size: 256
-    grad_update_every: 16
+    batch_size: 32
+    grad_update_every: 32
     num_steps_per_epoch: null
     num_epochs: 20
     checkpoint_every: 1

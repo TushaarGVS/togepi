@@ -5,7 +5,7 @@ import datasets
 import torch
 import torch.nn as nn
 import yaml
-from torch.optim import Adam
+from torch.optim import AdamW
 
 from togepi.data_processors.tokenizers.tokenizer import TogepiTokenizer
 from togepi.models.transformer import Transformer
@@ -42,7 +42,7 @@ def main(config_path, base_path_to_store_results, tokenizer_path, tokenized_hf_d
     transformer = Transformer(vocab_size=togepi_tokenizer.vocab_size,
                               padding_idx=togepi_tokenizer.pad_token_id, **config['transformer']['args'])
     transformer.summary()
-    optim = Adam(transformer.parameters(), **config['optim']['args'])
+    optim = AdamW(transformer.parameters(), **config['optim']['args'])
     trainer = Trainer(model=transformer, optim=optim, tracker=tracker, tok_train_data=tok_hf_dataset['train'],
                       tok_val_data=tok_val_data, loss_fn=nn.CrossEntropyLoss, device=device,
                       **config['trainer']['args'])

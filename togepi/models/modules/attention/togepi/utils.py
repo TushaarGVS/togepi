@@ -10,12 +10,13 @@ def prune_sparse(transformer, sparse_dens, use_spectral_norm=True, return_masks=
 
     for module in transformer.modules():
         if isinstance(module, TogepiSparse):
+            # https://discuss.pytorch.org/t/is-any-case-to-prefer-detach-cpu-to-cpu-detach-or-vice-versa/93712/2
             if use_spectral_norm:
-                grad = abs(module.sparse_mat_orig.grad.cpu().detach().numpy())
-                weight = abs(module.sparse_mat_orig.cpu().detach().numpy())
+                grad = abs(module.sparse_mat_orig.grad.detach().cpu().numpy())
+                weight = abs(module.sparse_mat_orig.detach().cpu().numpy())
             else:
-                grad = abs(module.sparse_mat.grad.cpu().detach().numpy())
-                weight = abs(module.sparse_mat.cpu().detach().numpy())
+                grad = abs(module.sparse_mat.grad.detach().cpu().numpy())
+                weight = abs(module.sparse_mat.detach().cpu().numpy())
 
             grad_threshold = np.percentile(grad, 100 - sparse_dens * 100)
             weight_threshold = np.percentile(weight, 100 - sparse_dens * 100)

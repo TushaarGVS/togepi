@@ -121,8 +121,8 @@ class Trainer(nn.Module):
     def _compute_sparsity_penalty(self):
         togepi_sparse_layers = filter(lambda layer: isinstance(layer, TogepiSparse), self.model.modules())
         sparse_densities = self.__compute_sparse_densities(togepi_sparse_layers)
-        # penalize beyond 1.5 * sparse_dens: 1.5x to account for "boolean or" between gradient and weight value masking
-        sparse_nonzero_weight_dens = [np.maximum(0, dens - (1.5 * self.sparse_dens)) for dens in sparse_densities]
+        # try: penalize beyond 1.5 * sparse_dens: 1.5x to account for "boolean or" between gradient and weight masking
+        sparse_nonzero_weight_dens = [np.maximum(0, dens - self.sparse_dens) for dens in sparse_densities]
         del togepi_sparse_layers  # clear out cuda memory
 
         return np.average(sparse_nonzero_weight_dens), sparse_densities
